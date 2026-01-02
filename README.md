@@ -2,7 +2,7 @@
 
 ![GoRepos Logo](https://via.placeholder.com/400x100/2E86AB/FFFFFF?text=GoRepos)
 
-A high-performance, parallel repository management tool built in Go, designed to replace and modernize MyRepos with advanced features and superior performance.
+A high-performance, parallel repository management tool built in Go.
 
 ## 🚀 Features
 
