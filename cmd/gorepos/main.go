@@ -679,10 +679,8 @@ func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefi
 
 // runSetup implements the setup command
 func runSetup(cmd *cobra.Command, args []string) error {
-	return config.RunSetup(&config.SetupOptions{
-		ConfigPath: setupPath,
-		BasePath:   setupBasePath,
-		Includes:   setupIncludes,
-		Force:      setupForce,
+	return config.RunSetup(config.SetupOptions{
+		BasePath: setupBasePath,
+		Force:    setupForce,
 	})
 }

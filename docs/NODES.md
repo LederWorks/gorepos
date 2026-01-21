@@ -2,6 +2,39 @@
 
 This document describes how nodes are used throughout the GoRepos system, from configuration loading to display and validation.
 
+## Current Architecture (January 2026)
+
+### Modular Command System
+- **Location**: `internal/commands/` package with dedicated command handlers
+- **Structure**: Each command has its own focused file following Single Responsibility Principle
+- **Commands**: `repos.go`, `validate.go`, `groups.go`, `graph.go`, `status.go`
+
+### Display Package Architecture  
+- **Organization**: 5 focused modules for different display strategies
+- **Files**:
+  - `types.go` - Core display types and interfaces
+  - `basic_tree.go` - Simple tree structure display
+  - `validation_tree.go` - Configuration validation status display
+  - `context_tree.go` - Context-aware filtering logic
+  - `groups_tree.go` - File-level groups display functionality
+
+### Config Package Modules
+- **Structure**: 8 focused modules with clear separation of concerns
+- **Modules**:
+  - `types.go` - Core types and constructor (`ConfigLoadResult`, `FileNode`, `Loader`)
+  - `loader.go` - Configuration loading with graph integration
+  - `validation.go` - Schema validation and business logic validation
+  - `merging.go` - Configuration merging and inheritance logic
+  - `setup.go` - Setup command and cross-platform path discovery (includes OneDrive support)
+  - `display.go` - Tree display and context-aware printing
+  - `utils.go` - Helper functions for filtering and tree operations
+  - `config.go` - Public API and coordination (entry points)
+
+### Windows Compatibility Features
+- **OneDrive Integration**: Smart detection of OneDrive Documents redirection
+- **Path Discovery**: Checks both standard and OneDrive Documents locations
+- **Cross-Platform**: Platform-specific config path resolution for Windows, macOS, and Linux
+
 ## Node Types Overview
 
 ### Core Node Types
@@ -173,19 +206,51 @@ if hasContextRepos || r.isWithinContextBranch(node, contextRepoMap) {
 
 ## Key Implementation Files
 
-### Configuration System
-- `internal/config/config.go`: FileNode creation and hierarchy management
-- `pkg/types/types.go`: Node structure definitions and validation tags
+### Command System (Modular Architecture)
+- `internal/commands/repos.go`: Repository filesystem hierarchy display
+- `internal/commands/validate.go`: Configuration validation with context filtering
+- `internal/commands/groups.go`: Groups command with file-level group display
+- `internal/commands/graph.go`: Configuration analysis and relationship mapping
+- `internal/commands/status.go`: Repository status checking
+- `cmd/gorepos/main.go`: Application entry point and command coordination
 
-### Display Logic
-- `printNodeWithValidation()`: Full display (base path)
-- `printNodeWithValidationContext()`: Context-filtered display
-- `hasContextRepositories()`: Determines node relevance
-- `isWithinContextBranch()`: Includes invalid configs in relevant branches
+### Configuration System (Refactored Modules)
+- `internal/config/types.go`: Core types (`ConfigLoadResult`, `FileNode`, `Loader`, `SetupOptions`)
+- `internal/config/loader.go`: Configuration loading, graph integration, recursive hierarchy loading
+- `internal/config/validation.go`: Schema validation (struct tags) and business logic validation
+- `internal/config/merging.go`: Configuration merging, inheritance, and group resolution
+- `internal/config/setup.go`: Setup command, cross-platform path discovery, OneDrive support
+- `internal/config/display.go`: Tree display methods and context-aware printing
+- `internal/config/utils.go`: Filtering utilities, tree operations, context calculations
+- `internal/config/config.go`: Public API entry points and coordination
+
+### Display Logic (Modular Components)
+- `internal/display/types.go`: Core display types and tree structures
+- `internal/display/basic_tree.go`: Simple tree visualization (`printNode`)
+- `internal/display/validation_tree.go`: Validation status display (`printNodeWithValidation`)
+- `internal/display/context_tree.go`: Context filtering (`printNodeWithValidationContext`)
+- `internal/display/groups_tree.go`: File-level group display (`convertToDisplayNodesWithFileGroups`)
 
 ### Graph Integration  
-- `pkg/graph/`: Node relationship analysis
-- Graph commands: Statistical analysis and visualization
+- `pkg/graph/builder.go`: Node relationship analysis and graph construction
+- `pkg/graph/query.go`: Graph querying and merged configuration retrieval
+- `pkg/types/types.go`: Node structure definitions and validation tags
+
+## Architecture Benefits
+
+### Current Design Principles
+- **Single Responsibility**: Each file has one clear, focused purpose
+- **Maintainability**: Files are kept concise (~200 lines max) and well-organized
+- **Clear boundaries**: Distinct separation between loading, validation, display, and setup
+- **Testability**: Modular structure enables focused unit testing
+- **Cross-platform compatibility**: Smart path resolution for Windows, macOS, and Linux
+
+### Development Advantages
+- **Code navigation**: Intuitive file organization makes features easy to find
+- **Parallel development**: Multiple developers can work on different modules simultaneously
+- **Debugging**: Issues can be isolated to specific modules
+- **Feature additions**: New functionality can be added without affecting unrelated code
+- **Windows integration**: Seamless OneDrive Documents folder support
 
 ## Context Filtering Challenges & Solutions
 
