@@ -19,6 +19,11 @@ var (
 	workers int
 	verbose bool
 	dryRun  bool
+
+	// setup command flags
+	setupPath     string
+	setupBasePath string
+	setupForce    bool
 )
 
 var rootCmd = &cobra.Command{
@@ -73,7 +78,19 @@ var graphCmd = &cobra.Command{
 	RunE:  runGraph,
 }
 
+var setupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "Initialize user configuration",
+	Long:  "Create a user-specific configuration file with platform-appropriate defaults",
+	RunE:  runSetup,
+}
+
 func init() {
+	// Setup command flags
+	setupCmd.Flags().StringVar(&setupPath, "path", "", "Custom path for configuration file")
+	setupCmd.Flags().StringVarP(&setupBasePath, "base-path", "b", "", "Custom base path for repositories")
+	setupCmd.Flags().BoolVarP(&setupForce, "force", "f", false, "Overwrite existing configuration file")
+
 	// Add global flags
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "Configuration file path")
 	rootCmd.PersistentFlags().IntVarP(&workers, "parallel", "p", 10, "Number of parallel workers")
@@ -87,6 +104,7 @@ func init() {
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(groupsCmd)
 	rootCmd.AddCommand(graphCmd)
+	rootCmd.AddCommand(setupCmd)
 }
 
 func main() {
@@ -684,4 +702,13 @@ func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefi
 		fmt.Printf("%s%s %s/\n", prefix, connector, child.Name)
 		displayConfigNode(graphQuery, child, childPrefix)
 	}
+}
+
+// runSetup implements the setup command
+func runSetup(cmd *cobra.Command, args []string) error {
+	return config.RunSetup(&config.SetupOptions{
+		ConfigPath: setupPath,
+		BasePath:   setupBasePath,
+		Force:      setupForce,
+	})
 }

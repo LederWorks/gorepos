@@ -1,11 +1,13 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -564,7 +566,18 @@ func GetConfigPath() (string, error) {
 		}
 	}
 
-	// Check in user home directory
+	// Check user configuration directories
+	userConfigPaths := getUserConfigPaths()
+	for _, configPath := range userConfigPaths {
+		for _, candidate := range candidates {
+			path := filepath.Join(configPath, candidate)
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			}
+		}
+	}
+
+	// Check in user home directory as fallback
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
 		for _, candidate := range candidates {
@@ -579,23 +592,258 @@ func GetConfigPath() (string, error) {
 
 GoRepos looks for configuration files in the following locations:
   1. Current directory: gorepos.yaml, gorepos.yml, .gorepos.yaml, .gorepos.yml
-  2. Home directory: %s/gorepos.yaml, %s/.gorepos.yaml
+  2. User config directory: %s
+  3. Home directory: %s
 
-To get started:
-  1. Create a gorepos.yaml file in your home directory or current directory
+To get started, run:
+  gorepos setup
+
+This will create a user configuration file with appropriate defaults for your platform.
+
+You can also:
+  1. Create a gorepos.yaml file manually in any of the above locations
   2. Use --config flag to specify a custom configuration file path
-  3. See examples at: https://github.com/LederWorks/gorepos-config
+  3. See examples at: https://github.com/LederWorks/gorepos-config`,
+		strings.Join(userConfigPaths, ", "), homeDir)
+}
 
-Example basic configuration:
----
+// getUserConfigPaths returns platform-appropriate user configuration directories
+func getUserConfigPaths() []string {
+	var paths []string
+
+	switch runtime.GOOS {
+	case "windows":
+		// Windows: Documents/gorepos
+		if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+			paths = append(paths, filepath.Join(userProfile, "Documents", "gorepos"))
+		}
+		// Fallback: %APPDATA%/gorepos
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			paths = append(paths, filepath.Join(appData, "gorepos"))
+		}
+	default:
+		// Unix-based systems: ~/.gorepos.d
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			paths = append(paths, filepath.Join(homeDir, ".gorepos.d"))
+		}
+		// XDG config directory: ~/.config/gorepos
+		if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); xdgConfig != "" {
+			paths = append(paths, filepath.Join(xdgConfig, "gorepos"))
+		} else if homeDir, err := os.UserHomeDir(); err == nil {
+			paths = append(paths, filepath.Join(homeDir, ".config", "gorepos"))
+		}
+	}
+
+	return paths
+}
+
+// getDefaultUserConfigPath returns the primary user config directory for setup
+func getDefaultUserConfigPath() (string, error) {
+	paths := getUserConfigPaths()
+	if len(paths) == 0 {
+		return "", fmt.Errorf("unable to determine user configuration directory")
+	}
+	return paths[0], nil
+}
+
+// SetupOptions contains configuration options for the setup command
+type SetupOptions struct {
+	ConfigPath string // Custom config file path
+	BasePath   string // Custom base path for repositories
+	Force      bool   // Overwrite existing config
+}
+
+// RunSetup creates a user configuration file
+func RunSetup(options *SetupOptions) error {
+	if options == nil {
+		options = &SetupOptions{}
+	}
+
+	fmt.Println("GoRepos Setup")
+	fmt.Println("=============")
+
+	var configFile string
+	var configDir string
+
+	if options.ConfigPath != "" {
+		// Use custom config path
+		if !filepath.IsAbs(options.ConfigPath) {
+			return fmt.Errorf("custom config path must be absolute: %s", options.ConfigPath)
+		}
+
+		configFile = options.ConfigPath
+		if filepath.Ext(configFile) == "" {
+			configFile = filepath.Join(configFile, "gorepos.yaml")
+		}
+		configDir = filepath.Dir(configFile)
+	} else {
+		// Use default config path with interactive prompt
+		defaultConfigDir, err := getDefaultUserConfigPath()
+		if err != nil {
+			return fmt.Errorf("failed to determine default config path: %w", err)
+		}
+
+		configDir = defaultConfigDir
+		fmt.Printf("Configuration will be created in: %s\n", defaultConfigDir)
+
+		if !options.Force {
+			fmt.Print("Press Enter to use default location, or enter a custom path: ")
+
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+				if input != "" {
+					if filepath.IsAbs(input) {
+						configDir = input
+					} else {
+						return fmt.Errorf("custom config path must be absolute: %s", input)
+					}
+				}
+			}
+		}
+
+		configFile = filepath.Join(configDir, "gorepos.yaml")
+	}
+
+	// Create config directory
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory %s: %w", configDir, err)
+	}
+
+	// Check if config already exists
+	if _, err := os.Stat(configFile); err == nil && !options.Force {
+		fmt.Printf("Configuration file already exists: %s\n", configFile)
+		fmt.Print("Overwrite? (y/N): ")
+
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			response := strings.ToLower(strings.TrimSpace(scanner.Text()))
+			if response != "y" && response != "yes" {
+				fmt.Println("Setup cancelled.")
+				return nil
+			}
+		}
+	}
+
+	// Determine appropriate base path
+	var basePath string
+	if options.BasePath != "" {
+		basePath = options.BasePath
+	} else {
+		var err error
+		basePath, err = getDefaultBasePath()
+		if err != nil {
+			return fmt.Errorf("failed to determine default base path: %w", err)
+		}
+	}
+
+	// Create user configuration template
+	userConfig := createUserConfigTemplate(basePath)
+
+	// Write configuration file
+	file, err := os.Create(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to create config file %s: %w", configFile, err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(userConfig); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	fmt.Printf("✅ Configuration file created: %s\n", configFile)
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("1. Edit the configuration file to add your repositories")
+	fmt.Println("2. Run 'gorepos validate' to check your configuration")
+	fmt.Println("3. Run 'gorepos status' to see repository status")
+	fmt.Println()
+	fmt.Println("For examples and templates, visit:")
+	fmt.Println("  https://github.com/LederWorks/gorepos-config")
+
+	return nil
+}
+
+// getDefaultBasePath determines an appropriate default base path for repositories
+func getDefaultBasePath() (string, error) {
+	// Try common development directories
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	candidates := []string{
+		filepath.Join(homeDir, "repositories"),
+		filepath.Join(homeDir, "repos"),
+		filepath.Join(homeDir, "src"),
+		filepath.Join(homeDir, "Development"),
+		filepath.Join(homeDir, "dev"),
+	}
+
+	// On Windows, also check common patterns
+	if runtime.GOOS == "windows" {
+		if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+			candidates = append(candidates, []string{
+				filepath.Join(userProfile, "Documents", "repositories"),
+				filepath.Join(userProfile, "Documents", "GitHub"),
+				"C:\\repositories",
+				"C:\\src",
+			}...)
+		}
+	}
+
+	// Return the first existing directory, or default to ~/repositories
+	for _, candidate := range candidates {
+		if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	// Default fallback
+	return filepath.Join(homeDir, "repositories"), nil
+}
+
+// createUserConfigTemplate creates a user configuration template
+func createUserConfigTemplate(basePath string) string {
+	return fmt.Sprintf(`# GoRepos User Configuration
+# Generated by 'gorepos setup'
+
 version: "1.0"
+
+# Include external configurations (optional)
+# includes:
+#   - "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"
+
+# Global settings for this user
 global:
   basePath: "%s"
-  workers: 5
+  workers: 8
   timeout: 300s
+  tags:
+    managed: true
+  labels:
+    - "user-managed"
+  environment:
+    GIT_CONFIG_GLOBAL: ""
+  credentials:
+    sshKeyPath: ""
+    gitCredHelper: ""
+
 repositories:
-  - name: "example"
-    path: "example"
-    url: "https://github.com/user/example.git"
-    branch: "main"`, homeDir, homeDir, filepath.Join(homeDir, "repositories"))
+  # Add your repositories here
+  # Example:
+  # - name: "my-project"
+  #   path: "my-project"
+  #   url: "https://github.com/user/my-project.git"
+  #   branch: "main"
+  #   tags:
+  #     type: "app"
+  #   labels: ["personal"]
+
+# Groups for convenient operations  
+groups:
+  # Example groups:
+  # personal: ["my-project"]
+  # work: []
+`, strings.ReplaceAll(basePath, "\\", "\\\\"))
 }
