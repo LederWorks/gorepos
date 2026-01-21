@@ -20,23 +20,23 @@ type Repository struct {
 
 // Config represents the complete configuration structure
 type Config struct {
-	Version      string                 `yaml:"version" validate:"required,oneof=1.0"`
+	Version      string                 `yaml:"version" validate:"omitempty,oneof=1.0"`
 	Includes     []string               `yaml:"includes,omitempty"`
-	Global       GlobalConfig           `yaml:"global" validate:"required"`
-	Repositories []Repository           `yaml:"repositories" validate:"required,min=1,dive"`
+	Global       GlobalConfig           `yaml:"global,omitempty"`
+	Repositories []Repository           `yaml:"repositories,omitempty" validate:"dive"`
 	Groups       map[string][]string    `yaml:"groups,omitempty"`
 	Templates    map[string]interface{} `yaml:"templates,omitempty"`
 }
 
 // GlobalConfig contains global settings
 type GlobalConfig struct {
-	BasePath    string                 `yaml:"basePath"`
-	Workers     int                    `yaml:"workers" validate:"min=1,max=100"`
-	Timeout     time.Duration          `yaml:"timeout" validate:"min=1s"`
+	BasePath    string                 `yaml:"basePath,omitempty"`
+	Workers     int                    `yaml:"workers,omitempty" validate:"omitempty,min=1,max=100"`
+	Timeout     time.Duration          `yaml:"timeout,omitempty" validate:"omitempty,min=1s"`
 	Environment map[string]string      `yaml:"environment,omitempty"`
 	Tags        map[string]interface{} `yaml:"tags,omitempty"`   // Global key-value tags
 	Labels      []string               `yaml:"labels,omitempty"` // Global simple labels
-	Credentials CredentialConfig       `yaml:"credentials,omitempty"`
+	Credentials *CredentialConfig      `yaml:"credentials,omitempty"`
 }
 
 // CredentialConfig handles credential management

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/LederWorks/gorepos/internal/commands"
 	"github.com/LederWorks/gorepos/internal/config"
 	"github.com/LederWorks/gorepos/internal/executor"
 	"github.com/LederWorks/gorepos/internal/repository"
@@ -49,6 +50,13 @@ var updateCmd = &cobra.Command{
 	Short: "Update all repositories",
 	Long:  "Pull latest changes for all configured repositories",
 	RunE:  runUpdate,
+}
+
+var reposCmd = &cobra.Command{
+	Use:   "repos",
+	Short: "Show repository filesystem hierarchy",
+	Long:  "Display the filesystem hierarchy of cloned repositories under basePath",
+	RunE:  runRepos,
 }
 
 var validateCmd = &cobra.Command{
@@ -103,6 +111,7 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(validateCmd)
+	rootCmd.AddCommand(reposCmd)
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(groupsCmd)
 	rootCmd.AddCommand(graphCmd)
@@ -155,101 +164,52 @@ func loadConfigWithVerbose() (*config.ConfigLoadResult, error) {
 	return result, nil
 }
 
+// filterRepositoriesByContext uses graph-based context awareness to filter repositories
+// If CWD is within a managed repository path, only return repos under that path
+// If CWD is at base path or outside managed paths, return all repos
+func filterRepositoriesByContext(repos []types.Repository, basePath string) []types.Repository {
+	cwd, err := os.Getwd()
+	if err != nil {
+		if verbose {
+			fmt.Printf("Warning: Could not get current directory: %v\n", err)
+		}
+		return repos // Return all repos if we can't determine context
+	}
+
+	// Build a graph from repositories for context analysis
+	graphImpl := graph.NewRepositoryGraphImpl()
+	var repoNodes []*graph.GraphNode
+
+	// Create repository nodes
+	for i, repo := range repos {
+		repoNode := graph.NewGraphNode(
+			fmt.Sprintf("repo:%s", repo.Name),
+			graph.NodeTypeRepository,
+			repo.Name,
+		)
+		repoNode.Repository = &repos[i]
+		repoNodes = append(repoNodes, repoNode)
+		graphImpl.AddNode(repoNode)
+	}
+
+	// Use graph-based filtering
+	filteredNodes := graphImpl.FilterRepositoriesByGraphContext(basePath, cwd, repoNodes)
+
+	// Convert back to repository array
+	var result []types.Repository
+	for _, node := range filteredNodes {
+		if node.Repository != nil {
+			result = append(result, *node.Repository)
+		}
+	}
+
+	return result
+}
+
 // runStatus executes the status command
 func runStatus(cmd *cobra.Command, args []string) error {
-	// Load configuration with hierarchy details
-	result, err := loadConfigWithVerbose()
-	if err != nil {
-		return err
-	}
-	cfg := result.Config
-
-	// Always show configuration hierarchy
-	result.PrintConfigTree()
-
-	// Override workers from command line if provided
-	if cmd.Flags().Changed("parallel") {
-		cfg.Global.Workers = workers
-	}
-
-	ctx := context.Background()
-	repoManager := repository.NewManager(cfg.Global.BasePath)
-	exec := executor.NewPool(cfg.Global.Workers)
-
-	fmt.Printf("GoRepos Status (workers: %d)\n", cfg.Global.Workers)
-	fmt.Println(strings.Repeat("=", 40))
-
-	// Prepare operations for enabled repositories
-	var operations []types.Operation
-	enabledRepos := make([]*types.Repository, 0)
-
-	for i := range cfg.Repositories {
-		repo := &cfg.Repositories[i]
-		if repo.Disabled {
-			if verbose {
-				fmt.Printf("Skipping disabled repository: %s\n", repo.Name)
-			}
-			continue
-		}
-		enabledRepos = append(enabledRepos, repo)
-		operations = append(operations, types.Operation{
-			Repository: repo,
-			Command:    "status",
-			Context:    ctx,
-		})
-	}
-
-	if len(operations) == 0 {
-		fmt.Println("No enabled repositories found")
-		return nil
-	}
-
-	if dryRun {
-		fmt.Println("DRY RUN MODE - Would check status of:")
-		for _, repo := range enabledRepos {
-			fmt.Printf("  - %s (%s)\n", repo.Name, repo.Path)
-		}
-		return nil
-	}
-
-	// Execute status operations
-	results := exec.Execute(ctx, operations)
-
-	// Process results
-	for result := range results {
-		fmt.Printf("\n%s:\n", result.Repository.Name)
-
-		// Get actual repository status using the repository manager
-		status, err := repoManager.Status(ctx, result.Repository)
-		if err != nil {
-			fmt.Printf("  Error: %v\n", err)
-			continue
-		}
-
-		fmt.Printf("  Path: %s\n", status.Path)
-		fmt.Printf("  Branch: %s\n", status.CurrentBranch)
-
-		if status.IsClean {
-			fmt.Printf("  Status: Clean\n")
-		} else {
-			fmt.Printf("  Status: %d uncommitted files\n", len(status.UncommittedFiles))
-			if verbose {
-				for _, file := range status.UncommittedFiles {
-					fmt.Printf("    - %s\n", file)
-				}
-			}
-		}
-
-		if status.AheadBehind != nil {
-			if status.AheadBehind.Ahead > 0 || status.AheadBehind.Behind > 0 {
-				fmt.Printf("  Sync: %d ahead, %d behind\n", status.AheadBehind.Ahead, status.AheadBehind.Behind)
-			} else {
-				fmt.Printf("  Sync: Up to date\n")
-			}
-		}
-	}
-
-	return exec.Shutdown(ctx)
+	statusCmd := commands.NewStatusCommand()
+	return statusCmd.Execute(cfgFile, verbose, workers, dryRun)
 }
 
 // runUpdate executes the update command
@@ -271,12 +231,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("GoRepos Update (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
 
-	// Prepare operations for enabled repositories that exist
+	// Filter repositories based on current working directory context
+	contextRepos := filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+
+	// Prepare operations for enabled repositories that exist in current context
 	var operations []types.Operation
 	updatedRepos := make([]*types.Repository, 0)
 
-	for i := range cfg.Repositories {
-		repo := &cfg.Repositories[i]
+	for i := range contextRepos {
+		repo := &contextRepos[i]
 		if repo.Disabled {
 			if verbose {
 				fmt.Printf("Skipping disabled repository: %s\n", repo.Name)
@@ -343,12 +306,15 @@ func runClone(cmd *cobra.Command, args []string) error {
 	fmt.Printf("GoRepos Clone (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
 
-	// Prepare operations for enabled repositories that don't exist
+	// Filter repositories based on current working directory context
+	contextRepos := filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+
+	// Prepare operations for enabled repositories that don't exist in current context
 	var operations []types.Operation
 	clonedRepos := make([]*types.Repository, 0)
 
-	for i := range cfg.Repositories {
-		repo := &cfg.Repositories[i]
+	for i := range contextRepos {
+		repo := &contextRepos[i]
 		if repo.Disabled {
 			if verbose {
 				fmt.Printf("Skipping disabled repository: %s\n", repo.Name)
@@ -400,120 +366,39 @@ func runClone(cmd *cobra.Command, args []string) error {
 
 // runValidate executes the validate command
 func runValidate(cmd *cobra.Command, args []string) error {
-	loader := config.NewLoader()
+	validateCmd := commands.NewValidateCommand()
+	return validateCmd.Execute(cfgFile, verbose)
+}
 
-	// Get config file path
-	configPath := cfgFile
-	if configPath == "" {
-		var err error
-		configPath, err = config.GetConfigPath()
-		if err != nil {
-			return err
-		}
-	}
-
-	fmt.Printf("Validating configuration file: %s\n", configPath)
-	fmt.Println()
-
-	// Load and validate configuration
-	result, err := loader.LoadConfigWithDetails(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Configuration validation failed: %v\n", err)
-		return err
-	}
-
-	// Always show configuration hierarchy with validation status
-	result.PrintConfigTreeWithValidation()
-
-	if verbose {
-		fmt.Printf("Configuration files validated (%d files):\n", len(result.ProcessedFiles))
-		for _, file := range result.ProcessedFiles {
-			fmt.Printf("  - %s\n", file)
-		}
-		fmt.Printf("Schema validation passed for all included files\n")
-		fmt.Printf("Configuration logic validation passed\n")
-	}
-	return nil
+// runRepos executes the repos command
+func runRepos(cmd *cobra.Command, args []string) error {
+	reposCmd := commands.NewReposCommand()
+	return reposCmd.Execute(cfgFile, verbose)
 }
 
 // runGroups executes the groups command
 func runGroups(cmd *cobra.Command, args []string) error {
-	result, err := loadConfigWithVerbose()
-	if err != nil {
-		return err
-	}
-	cfg := result.Config
-
-	if verbose {
-		result.PrintConfigTree()
-	}
-
-	fmt.Printf("Repository Groups:\n")
-	fmt.Println(strings.Repeat("=", 20))
-
-	if len(cfg.Groups) == 0 {
-		fmt.Println("No groups defined")
-		return nil
-	}
-
-	for groupName, repos := range cfg.Groups {
-		fmt.Printf("\n%s (%d repositories):\n", groupName, len(repos))
-		for _, repoName := range repos {
-			// Find the repository to show its status
-			var repo *types.Repository
-			for i := range cfg.Repositories {
-				if cfg.Repositories[i].Name == repoName {
-					repo = &cfg.Repositories[i]
-					break
-				}
-			}
-
-			if repo != nil {
-				status := "●"
-				if repo.Disabled {
-					status = "○"
-				}
-				fmt.Printf("  %s %s\n", status, repoName)
-			} else {
-				fmt.Printf("  ? %s (not found)\n", repoName)
-			}
-		}
-	}
-
-	return nil
+	groupsCmd := commands.NewGroupsCommand()
+	return groupsCmd.Execute(cfgFile, verbose)
 }
 
 // runGraph executes the graph command
 func runGraph(cmd *cobra.Command, args []string) error {
-	// Get config file path
-	configPath := cfgFile
-	if configPath == "" {
-		var err error
-		configPath, err = config.GetConfigPath()
-		if err != nil {
-			return err
-		}
-	}
-
-	fmt.Printf("Configuration Graph: %s\n", configPath)
-	fmt.Println()
-
-	// Build the repository graph
-	builder := graph.NewGraphBuilder()
-	graphQuery, err := builder.BuildGraph(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to build repository graph: %w", err)
-	}
-
-	// Display graph information
-	displayGraph(graphQuery)
-
-	return nil
+	graphCmd := commands.NewGraphCommand()
+	return graphCmd.Execute(cfgFile, verbose)
 }
 
 // displayGraph shows comprehensive graph information in a user-friendly format
-func displayGraph(graphQuery graph.GraphQuery) {
+func displayGraph(graphQuery graph.GraphQuery, contextRepos []types.Repository) {
 	fmt.Println("=== Configuration Graph Overview ===")
+
+	// Create context repository map for quick lookup
+	contextRepoMap := make(map[string]bool)
+	if contextRepos != nil {
+		for _, repo := range contextRepos {
+			contextRepoMap[repo.Name] = true
+		}
+	}
 
 	// Show node summary
 	fmt.Println("\n--- Node Summary ---")
@@ -522,7 +407,12 @@ func displayGraph(graphQuery graph.GraphQuery) {
 		graph.NodeTypeTag, graph.NodeTypeLabel,
 	} {
 		nodes := graphQuery.GetNodesByType(nodeType)
-		fmt.Printf("%-12s: %d\n", nodeType, len(nodes))
+		// Only show repositories that are in context
+		if nodeType == graph.NodeTypeRepository && contextRepos != nil {
+			fmt.Printf("%-12s: %d\n", nodeType, len(contextRepos))
+		} else {
+			fmt.Printf("%-12s: %d\n", nodeType, len(nodes))
+		}
 	}
 
 	// Show entity classification
@@ -549,19 +439,36 @@ func displayGraph(graphQuery graph.GraphQuery) {
 
 	// Show configuration hierarchy
 	fmt.Println("\n--- Configuration Hierarchy ---")
-	displayConfigHierarchy(graphQuery)
+	displayConfigHierarchy(graphQuery, contextRepoMap)
 
-	// Show groups with repositories
+	// Show groups with repositories (context-filtered)
 	fmt.Println("\n--- Repository Groups ---")
 	groups := graphQuery.GetGroupsForDisplay()
 	if len(groups) == 0 {
 		fmt.Println("No groups defined")
 	} else {
+		hasContextGroups := false
 		for groupName, repos := range groups {
-			fmt.Printf("\n%s (%d repositories):\n", groupName, len(repos))
+			// Filter repositories in this group to only those in context
+			var contextRepos []string
 			for _, repo := range repos {
-				fmt.Printf("  • %s\n", repo)
+				if len(contextRepoMap) == 0 || contextRepoMap[repo] {
+					contextRepos = append(contextRepos, repo)
+				}
 			}
+			// Only show groups that have repositories in current context
+			if len(contextRepos) > 0 {
+				if !hasContextGroups {
+					hasContextGroups = true
+				}
+				fmt.Printf("\n%s (%d repositories):\n", groupName, len(contextRepos))
+				for _, repo := range contextRepos {
+					fmt.Printf("  • %s\n", repo)
+				}
+			}
+		}
+		if !hasContextGroups {
+			fmt.Println("No groups with repositories in current context")
 		}
 	}
 
@@ -571,42 +478,76 @@ func displayGraph(graphQuery graph.GraphQuery) {
 	if len(repositories) == 0 {
 		fmt.Println("No repositories defined")
 	} else {
+		// Filter repositories to only show those in context
 		for _, repoNode := range repositories {
+			// Skip repositories not in current context
+			if contextRepos != nil && !contextRepoMap[repoNode.Name] {
+				continue
+			}
+
 			status := "●"
 			if repoNode.Repository != nil && repoNode.Repository.Disabled {
 				status = "○"
 			}
+
 			fmt.Printf("  %s %-30s (scope: %s)\n", status, repoNode.Name, repoNode.GetPathString())
 		}
 	}
 
-	// Show tags and labels
+	// Show tags and labels (context-filtered)
 	fmt.Println("\n--- Tags and Labels ---")
-	displayTagsAndLabels(graphQuery)
+	displayTagsAndLabels(graphQuery, contextRepoMap)
 }
 
-// displayTagsAndLabels shows all tags and labels in the graph
-func displayTagsAndLabels(graphQuery graph.GraphQuery) {
+// displayTagsAndLabels shows tags and labels used by repositories in context
+func displayTagsAndLabels(graphQuery graph.GraphQuery, contextRepoMap map[string]bool) {
 	// Display tags
 	tags := graphQuery.GetNodesByType(graph.NodeTypeTag)
 	if len(tags) > 0 {
-		fmt.Printf("\nTags (%d):\n", len(tags))
+		// Filter tags to only those used by repositories in context
+		relevantTags := make([]*graph.GraphNode, 0)
 		for _, tagNode := range tags {
 			if tagNode.Tag != nil {
-				fmt.Printf("  🏷️  %s = %v (scope: %s)\n", tagNode.Tag.Name, tagNode.Tag.Value, tagNode.Tag.Scope)
-
-				// Show which entities have this tag
+				// Check if this tag is used by any repository in context
 				taggedWith := graphQuery.GetRelationshipsByType(graph.RelationTaggedWith)
-				var taggedEntities []string
+				isRelevant := false
 				for _, rel := range taggedWith {
 					if rel.To.ID == tagNode.ID {
-						taggedEntities = append(taggedEntities, rel.From.Name)
+						// If no context filtering or the tagged entity is in context
+						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
+							isRelevant = true
+							break
+						}
 					}
 				}
-				if len(taggedEntities) > 0 {
-					fmt.Printf("      Used by: %s\n", strings.Join(taggedEntities, ", "))
+				if isRelevant {
+					relevantTags = append(relevantTags, tagNode)
 				}
 			}
+		}
+
+		if len(relevantTags) > 0 {
+			fmt.Printf("\nTags (%d):\n", len(relevantTags))
+			for _, tagNode := range relevantTags {
+				fmt.Printf("  🏷️  %s = %v (scope: %s)\n", tagNode.Tag.Name, tagNode.Tag.Value, tagNode.Tag.Scope)
+
+				// Show which context entities have this tag
+				taggedWith := graphQuery.GetRelationshipsByType(graph.RelationTaggedWith)
+				var contextTaggedEntities []string
+				for _, rel := range taggedWith {
+					if rel.To.ID == tagNode.ID {
+						// Only include entities that are in context
+						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
+							contextTaggedEntities = append(contextTaggedEntities, rel.From.Name)
+						}
+					}
+				}
+				if len(contextTaggedEntities) > 0 {
+					fmt.Printf("      Used by: %s\n", strings.Join(contextTaggedEntities, ", "))
+				}
+			}
+		} else {
+			fmt.Println("\nTags: None relevant to current context")
 		}
 	} else {
 		fmt.Println("\nTags: None defined")
@@ -615,31 +556,58 @@ func displayTagsAndLabels(graphQuery graph.GraphQuery) {
 	// Display labels
 	labels := graphQuery.GetNodesByType(graph.NodeTypeLabel)
 	if len(labels) > 0 {
-		fmt.Printf("\nLabels (%d):\n", len(labels))
+		// Filter labels to only those used by repositories in context
+		relevantLabels := make([]*graph.GraphNode, 0)
 		for _, labelNode := range labels {
 			if labelNode.Label != nil {
-				fmt.Printf("  🏷️  %s (scope: %s)\n", labelNode.Label.Name, labelNode.Label.Scope)
-
-				// Show which entities have this label
+				// Check if this label is used by any repository in context
 				labeledWith := graphQuery.GetRelationshipsByType(graph.RelationLabeledWith)
-				var labeledEntities []string
+				isRelevant := false
 				for _, rel := range labeledWith {
 					if rel.To.ID == labelNode.ID {
-						labeledEntities = append(labeledEntities, rel.From.Name)
+						// If no context filtering or the labeled entity is in context
+						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
+							isRelevant = true
+							break
+						}
 					}
 				}
-				if len(labeledEntities) > 0 {
-					fmt.Printf("      Used by: %s\n", strings.Join(labeledEntities, ", "))
+				if isRelevant {
+					relevantLabels = append(relevantLabels, labelNode)
 				}
 			}
+		}
+
+		if len(relevantLabels) > 0 {
+			fmt.Printf("\nLabels (%d):\n", len(relevantLabels))
+			for _, labelNode := range relevantLabels {
+				fmt.Printf("  🏷️  %s (scope: %s)\n", labelNode.Label.Name, labelNode.Label.Scope)
+
+				// Show which context entities have this label
+				labeledWith := graphQuery.GetRelationshipsByType(graph.RelationLabeledWith)
+				var contextLabeledEntities []string
+				for _, rel := range labeledWith {
+					if rel.To.ID == labelNode.ID {
+						// Only include entities that are in context
+						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
+							contextLabeledEntities = append(contextLabeledEntities, rel.From.Name)
+						}
+					}
+				}
+				if len(contextLabeledEntities) > 0 {
+					fmt.Printf("      Used by: %s\n", strings.Join(contextLabeledEntities, ", "))
+				}
+			}
+		} else {
+			fmt.Println("\nLabels: None relevant to current context")
 		}
 	} else {
 		fmt.Println("\nLabels: None defined")
 	}
 }
 
-// displayConfigHierarchy shows the configuration file hierarchy
-func displayConfigHierarchy(graphQuery graph.GraphQuery) {
+// displayConfigHierarchy shows the configuration file hierarchy with context filtering
+func displayConfigHierarchy(graphQuery graph.GraphQuery, contextRepoMap map[string]bool) {
 	// Get root node
 	configNodes := graphQuery.GetNodesByType(graph.NodeTypeConfig)
 	if len(configNodes) == 0 {
@@ -658,12 +626,12 @@ func displayConfigHierarchy(graphQuery graph.GraphQuery) {
 	// Display hierarchy for each root config
 	for _, rootConfig := range rootConfigs {
 		fmt.Printf("└── %s\n", rootConfig.Name)
-		displayConfigNode(graphQuery, rootConfig, "    ")
+		displayConfigNode(graphQuery, rootConfig, "    ", contextRepoMap)
 	}
 }
 
-// displayConfigNode recursively displays a config node and its children
-func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefix string) {
+// displayConfigNode recursively displays a config node and its children with context filtering
+func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefix string, contextRepoMap map[string]bool) {
 	// Get children config nodes
 	children := graphQuery.GetChildren(node, graph.NodeTypeConfig)
 
@@ -672,7 +640,10 @@ func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefi
 	relationships := graphQuery.GetRelationshipsByType(graph.RelationDefines)
 	for _, rel := range relationships {
 		if rel.From.ID == node.ID && rel.To.Type == graph.NodeTypeRepository {
-			repositories = append(repositories, rel.To)
+			// Only include repositories that are in context (if context filtering is enabled)
+			if len(contextRepoMap) == 0 || contextRepoMap[rel.To.Name] {
+				repositories = append(repositories, rel.To)
+			}
 		}
 	}
 
@@ -702,7 +673,7 @@ func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefi
 		}
 
 		fmt.Printf("%s%s %s/\n", prefix, connector, child.Name)
-		displayConfigNode(graphQuery, child, childPrefix)
+		displayConfigNode(graphQuery, child, childPrefix, contextRepoMap)
 	}
 }
 

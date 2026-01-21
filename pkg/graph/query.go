@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // RepositoryGraphImpl implements the GraphQuery interface
@@ -582,4 +583,101 @@ func (g *RepositoryGraphImpl) PrintDebugInfo() {
 			fmt.Printf("    InheritedRepos: %v\n", group.Group.InheritedRepos)
 		}
 	}
+}
+
+// GetRepositoriesByContext retrieves repositories that are within the specified context path
+func (g *RepositoryGraphImpl) GetRepositoriesByContext(contextPath string) []*GraphNode {
+	var result []*GraphNode
+
+	// Get all repository nodes
+	repositories := g.GetNodesByType(NodeTypeRepository)
+
+	// If context path is empty or at base, return all repositories
+	if contextPath == "" || contextPath == "." {
+		return repositories
+	}
+
+	// Filter repositories based on path containment
+	for _, repo := range repositories {
+		if repo.Repository != nil {
+			// Normalize paths for comparison
+			repoPath := strings.ReplaceAll(repo.Repository.Path, "\\", "/")
+			context := strings.ReplaceAll(contextPath, "\\", "/")
+
+			// Check if repository path starts with context path
+			if strings.HasPrefix(repoPath, context) {
+				result = append(result, repo)
+			}
+		}
+	}
+
+	return result
+}
+
+// GetContextForPath creates or finds a context node for the given path
+func (g *RepositoryGraphImpl) GetContextForPath(basePath, currentPath string) *GraphNode {
+	// Calculate relative path from base
+	basePath = strings.ReplaceAll(basePath, "\\", "/")
+	currentPath = strings.ReplaceAll(currentPath, "\\", "/")
+
+	var relativePath string
+	if !strings.HasPrefix(currentPath, basePath) || currentPath == basePath {
+		relativePath = "." // At or above base path
+	} else {
+		relativePath = strings.TrimPrefix(currentPath, basePath)
+		relativePath = strings.TrimPrefix(relativePath, "/")
+	}
+
+	// Check if context node already exists
+	contextID := fmt.Sprintf("context:%s", relativePath)
+	if existingNode := g.GetNode(contextID); existingNode != nil {
+		return existingNode
+	}
+
+	// Create new context node
+	contextNode := NewGraphNode(contextID, NodeTypeContext, fmt.Sprintf("Context: %s", relativePath))
+	contextNode.Context = &ContextDefinition{
+		Path:         currentPath,
+		RelativePath: relativePath,
+		IsActive:     true,
+		Depth:        len(strings.Split(relativePath, "/")) - 1,
+	}
+
+	// Add to graph (in a real implementation, this would be done during graph building)
+	// For now, we'll just return the node for analysis
+	return contextNode
+}
+
+// FilterRepositoriesByGraphContext uses the graph structure to intelligently filter repositories
+func (g *RepositoryGraphImpl) FilterRepositoriesByGraphContext(basePath, currentPath string, allRepositories []*GraphNode) []*GraphNode {
+	// Get or create context node
+	contextNode := g.GetContextForPath(basePath, currentPath)
+
+	// If we're at the base path or above, return all repositories
+	if contextNode.Context.RelativePath == "." {
+		return allRepositories
+	}
+
+	// Filter repositories using graph-aware logic
+	var result []*GraphNode
+	contextPath := contextNode.Context.RelativePath
+
+	for _, repo := range allRepositories {
+		if repo.Repository != nil {
+			// Calculate repository's relative path from base
+			repoPath := strings.ReplaceAll(repo.Repository.Path, "\\", "/")
+			repoRelative := strings.TrimPrefix(repoPath, basePath)
+			repoRelative = strings.TrimPrefix(repoRelative, "/")
+
+			// Check if repository is within current context
+			if strings.HasPrefix(repoRelative, contextPath) {
+				result = append(result, repo)
+			}
+		}
+	}
+
+	// Update context node with repository count
+	contextNode.Context.RepoCount = len(result)
+
+	return result
 }
