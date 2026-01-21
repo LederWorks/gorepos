@@ -23,6 +23,7 @@ var (
 	// setup command flags
 	setupPath     string
 	setupBasePath string
+	setupIncludes []string
 	setupForce    bool
 )
 
@@ -89,6 +90,7 @@ func init() {
 	// Setup command flags
 	setupCmd.Flags().StringVar(&setupPath, "path", "", "Custom path for configuration file")
 	setupCmd.Flags().StringVarP(&setupBasePath, "base-path", "b", "", "Custom base path for repositories")
+	setupCmd.Flags().StringSliceVar(&setupIncludes, "includes", nil, "Include files or URLs to add to configuration")
 	setupCmd.Flags().BoolVarP(&setupForce, "force", "f", false, "Overwrite existing configuration file")
 
 	// Add global flags
@@ -709,6 +711,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	return config.RunSetup(&config.SetupOptions{
 		ConfigPath: setupPath,
 		BasePath:   setupBasePath,
+		Includes:   setupIncludes,
 		Force:      setupForce,
 	})
 }

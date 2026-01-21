@@ -1,8 +1,8 @@
-# GoRepos Build Scripts
+# GoRepos Build & Test Scripts
 
-This directory contains build scripts for the GoRepos project that enable easy compilation across different platforms.
+This directory contains build scripts and testing framework for the GoRepos project.
 
-## Scripts
+## Build Scripts
 
 ### `build.ps1` (PowerShell - Windows)
 
@@ -259,3 +259,20 @@ These scripts are designed to be easily integrated into CI/CD pipelines:
     .\scripts\build.ps1 -Target all -Clean -Test
   displayName: 'Build GoRepos'
 ```
+
+---
+
+## Testing Framework
+
+The local testing framework for GoRepos is located in the [`local/`](local/) directory.
+
+**Quick Start:**
+```powershell
+# Build first
+.\scripts\build.ps1
+
+# Run basic test
+.\scripts\local\grtest1.ps1 -Setup
+```
+
+For comprehensive testing documentation, usage examples, and framework details, see [**local/LOCAL.md**](local/LOCAL.md).
