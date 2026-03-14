@@ -108,19 +108,17 @@ func (r *ReposCommand) filterRepositoriesByContext(repositories []types.Reposito
 	relPath = strings.TrimPrefix(relPath, "/")
 	relPath = strings.TrimSuffix(relPath, "/")
 
-	// Find repositories that would be placed in the current context directory or subdirectories
+	if relPath == "" {
+		return repositories
+	}
+
+	// Find repositories whose configured path is under the current context directory
 	var contextRepos []types.Repository
 	for _, repo := range repositories {
-		repoPath := r.parseRepositoryPath(repo.Name)
+		normRepoPath := strings.ReplaceAll(repo.Path, "\\", "/")
 
-		// If we're at base path, show all repositories
-		if relPath == "" {
-			contextRepos = append(contextRepos, repo)
-			continue
-		}
-
-		// Check if repository path starts with current relative path
-		if strings.HasPrefix(repoPath, relPath) {
+		// Include the repo if its path starts with the current relative path
+		if strings.HasPrefix(normRepoPath, relPath) {
 			contextRepos = append(contextRepos, repo)
 		}
 	}
@@ -154,106 +152,41 @@ func (r *ReposCommand) buildDirectoryTree(repos []types.Repository, basePath str
 	}
 
 	for _, repo := range repos {
-		// Parse repository path to extract directory structure
-		relPath := r.parseRepositoryPath(repo.Name)
+		// Use repo.Path to derive the parent directory in the tree.
+		// repo.Path is the relative path of the repository under basePath,
+		// so its parent directory determines where the repo node is nested.
+		normPath := strings.ReplaceAll(repo.Path, "\\", "/")
+		parentDir := filepath.ToSlash(filepath.Dir(normPath))
+		if parentDir == "." {
+			parentDir = ""
+		}
 
-		if relPath == "" || relPath == repo.Name {
-			// Repository goes directly in root
+		if parentDir == "" {
+			// Repository lives directly in the root
 			root.Repositories = append(root.Repositories, repo)
 			continue
 		}
 
-		// Navigate through directory structure, creating intermediate directories
-		parts := strings.Split(relPath, "/")
+		// Create all intermediate directory nodes, then attach the repository
+		// to the leaf directory node.
+		parts := strings.Split(parentDir, "/")
 		current := root
-
-		// Create all intermediate directories
-		for i, part := range parts {
+		for _, part := range parts {
 			if part == "" {
 				continue
 			}
-
-			if i == len(parts)-1 {
-				// This is the final directory that contains the repository
-				if current.Subdirs[part] == nil {
-					current.Subdirs[part] = &DirectoryNode{
-						Name:    part,
-						Subdirs: make(map[string]*DirectoryNode),
-					}
+			if current.Subdirs[part] == nil {
+				current.Subdirs[part] = &DirectoryNode{
+					Name:    part,
+					Subdirs: make(map[string]*DirectoryNode),
 				}
-				current.Subdirs[part].Repositories = append(current.Subdirs[part].Repositories, repo)
-			} else {
-				// This is an intermediate directory
-				if current.Subdirs[part] == nil {
-					current.Subdirs[part] = &DirectoryNode{
-						Name:    part,
-						Subdirs: make(map[string]*DirectoryNode),
-					}
-				}
-				current = current.Subdirs[part]
 			}
+			current = current.Subdirs[part]
 		}
+		current.Repositories = append(current.Repositories, repo)
 	}
 
 	return root
-}
-
-// parseRepositoryPath converts repository name to parent directory path only
-func (r *ReposCommand) parseRepositoryPath(repoName string) string {
-	// Handle common patterns in repository names to create proper directory structure
-	// Examples:
-	// "lederworks-gorepos-main" -> "lederworks/github/gorepos"
-	// "lederworks-gorepos-config" -> "lederworks/github/gorepos"
-	// "lederworks-myrepos-main" -> "lederworks/github/myrepos"
-	// "ledermayer-github-diagrams" -> "ledermayer/github"
-	// "hello-world-example" -> "examples"
-
-	parts := strings.Split(repoName, "-")
-	if len(parts) < 2 {
-		return "" // Single word repos go to root
-	}
-
-	// Special handling for different patterns
-	switch {
-	case parts[0] == "lederworks" && len(parts) >= 3:
-		// lederworks repos: lederworks-project-type -> lederworks/github/project
-		project := parts[1]
-
-		// Determine platform (default to github for lederworks repos)
-		platform := "github"
-		if strings.Contains(repoName, "terraform") {
-			platform = "github" // Keep terraform repos under github
-		}
-
-		// Group by project, not by individual repo type
-		return fmt.Sprintf("%s/%s/%s", parts[0], platform, project)
-
-	case parts[0] == "ledermayer" && len(parts) >= 2:
-		if parts[1] == "github" && len(parts) >= 3 {
-			// ledermayer-github-project -> ledermayer/github
-			return fmt.Sprintf("%s/%s", parts[0], parts[1])
-		} else if len(parts) >= 3 {
-			// ledermayer-type-project -> ledermayer/type
-			return fmt.Sprintf("%s/%s", parts[0], parts[1])
-		} else {
-			// ledermayer-project -> ledermayer
-			return parts[0]
-		}
-
-	case strings.Contains(repoName, "example") || strings.Contains(repoName, "hello") || strings.Contains(repoName, "spoon"):
-		// Example repos go to examples directory
-		return "examples"
-
-	default:
-		// Default pattern: org-project-... -> org/project
-		if len(parts) >= 2 {
-			org := parts[0]
-			project := parts[1]
-			return fmt.Sprintf("%s/%s", org, project)
-		}
-	}
-
-	return "" // Fallback to root
 }
 
 // printDirectoryTree recursively prints the directory tree

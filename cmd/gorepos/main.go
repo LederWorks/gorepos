@@ -15,6 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is embedded at build time via -ldflags "-X main.version=..."
+var version string
+
 var (
 	cfgFile string
 	workers int
@@ -680,7 +683,9 @@ func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefi
 // runSetup implements the setup command
 func runSetup(cmd *cobra.Command, args []string) error {
 	return config.RunSetup(config.SetupOptions{
+		Path:     setupPath,
 		BasePath: setupBasePath,
+		Includes: setupIncludes,
 		Force:    setupForce,
 	})
 }

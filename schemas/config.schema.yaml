@@ -18,8 +18,8 @@ properties:
     type: array
     items:
       type: string
-      description: "Path to another configuration file to include (relative or absolute paths, URLs supported)"
-    description: "List of configuration files to include and merge"
+      description: "Path to another configuration file to include (relative or absolute local paths, or HTTP/HTTPS URLs)"
+    description: "List of configuration files to include and merge (local paths and HTTP/HTTPS URLs are supported)"
     examples:
       - ["./configs/github.yaml", "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"]
 

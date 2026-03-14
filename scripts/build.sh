@@ -9,8 +9,8 @@
 #   ./scripts/build.sh [options]
 #
 # Options:
-#   -t, --target PLATFORM     Target platform (windows, linux, darwin, all) [default: current]
-#   -a, --arch ARCH           Target architecture (amd64, arm64, all) [default: amd64]
+#   -t, --target PLATFORM     Target platform (windows, linux, darwin, all) [default: all]
+#   -a, --arch ARCH           Target architecture (amd64, arm64, all) [default: all]
 #   -o, --output DIR          Output directory [default: dist]
 #   -v, --version VERSION     Version string to embed
 #   -c, --clean               Clean output directory before building
@@ -19,7 +19,7 @@
 #   -h, --help                Show this help message
 #
 # Examples:
-#   ./scripts/build.sh                           # Build for current platform
+#   ./scripts/build.sh                           # Build for all platforms and architectures
 #   ./scripts/build.sh -t all -a amd64 -c       # Build for all platforms with amd64
 #   ./scripts/build.sh -t linux --test          # Build for Linux with tests
 
@@ -86,8 +86,18 @@ get_content_hash() {
     fi
     
     # Create hash and take first 8 characters
+    # sha256sum is not available on macOS; fall back to shasum or openssl
     local hash
-    hash=$(echo -n "$content" | sha256sum | cut -d' ' -f1 | head -c 8)
+    if command -v sha256sum &> /dev/null; then
+        hash=$(echo -n "$content" | sha256sum | cut -d' ' -f1 | head -c 8)
+    elif command -v shasum &> /dev/null; then
+        hash=$(echo -n "$content" | shasum -a 256 | cut -d' ' -f1 | head -c 8)
+    elif command -v openssl &> /dev/null; then
+        hash=$(echo -n "$content" | openssl dgst -sha256 | awk -F'= ' '{print $2}' | head -c 8)
+    else
+        error "No SHA-256 tool found (sha256sum, shasum, or openssl). Please install one."
+        exit 1
+    fi
     
     echo "${hash}-local"
 }
@@ -101,8 +111,8 @@ Usage:
   ./scripts/build.sh [options]
 
 Options:
-  -t, --target PLATFORM     Target platform (windows, linux, darwin, all) [default: current]
-  -a, --arch ARCH           Target architecture (amd64, arm64, all) [default: amd64]
+  -t, --target PLATFORM     Target platform (windows, linux, darwin, all) [default: all]
+  -a, --arch ARCH           Target architecture (amd64, arm64, all) [default: all]
   -o, --output DIR          Output directory [default: dist]
   -v, --version VERSION     Version string to embed
   --content-hash            Use content-based versioning for local development
@@ -112,7 +122,7 @@ Options:
   -h, --help                Show this help message
 
 Examples:
-  ./scripts/build.sh                           # Build for current platform
+  ./scripts/build.sh                           # Build for all platforms and architectures
   ./scripts/build.sh -t all -a amd64 -c       # Build for all platforms with amd64
   ./scripts/build.sh -t linux --test          # Build for Linux with tests
 EOF

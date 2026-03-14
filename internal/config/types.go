@@ -31,7 +31,9 @@ type FileNode struct {
 // SetupOptions contains options for the setup command
 type SetupOptions struct {
 	Force    bool
+	Path     string   // Custom path for the configuration file
 	BasePath string
+	Includes []string // Include paths or URLs to embed in the configuration
 	Workers  int
 	Timeout  time.Duration
 }

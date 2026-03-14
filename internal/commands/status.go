@@ -176,7 +176,8 @@ func (s *StatusCommand) filterRepositoriesByContext(repositories []types.Reposit
 	// Find repositories that are in the current context (directory or subdirectories)
 	var contextRepos []types.Repository
 	for _, repo := range repositories {
-		if strings.HasPrefix(repo.Name, relPath) || relPath == repo.Name {
+		normRepoPath := strings.ReplaceAll(repo.Path, "\\", "/")
+		if strings.HasPrefix(normRepoPath, relPath) {
 			contextRepos = append(contextRepos, repo)
 		}
 	}

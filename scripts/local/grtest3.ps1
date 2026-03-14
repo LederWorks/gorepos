@@ -49,6 +49,7 @@ param(
     [switch]$Groups,
     [switch]$Clone,
     [switch]$Update,
+    [string]$SetupIncludes = "",
     [switch]$VerboseOutput
 )
 
@@ -81,6 +82,7 @@ if ($Groups) { $TestArgs['Groups'] = $true }
 if ($Clone) { $TestArgs['Clone'] = $true }
 if ($Update) { $TestArgs['Update'] = $true }
 if ($VerboseOutput) { $TestArgs['VerboseOutput'] = $true }
+if ($SetupIncludes -ne "") { $TestArgs['SetupIncludes'] = $SetupIncludes }
 
 # Execute shared test script
 & $TestLocalScript @TestArgs

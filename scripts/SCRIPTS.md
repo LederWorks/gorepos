@@ -185,11 +185,11 @@ Version information is automatically detected using:
 2. Fallback to development timestamp (`dev-YYYYMMDD`)
 3. Manual override via command line parameter
 
-The version is embedded into the binary using Go's `-ldflags` and can be accessed through the `main.version` variable.
+The version is embedded into the binary using Go's `-ldflags "-X main.version=..."`. The `version` variable must be declared in `package main` (see `cmd/gorepos/main.go`).
 
 ## Prerequisites
 
-- **Go 1.19+**: Required for building
+- **Go 1.25.5+**: Required for building (matches `go.mod`)
 - **Git** (optional): For automatic version detection
 - **PowerShell 5.1+ or PowerShell Core** (for build.ps1)
 - **Bash 4.0+** (for build.sh)

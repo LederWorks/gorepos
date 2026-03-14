@@ -40,6 +40,9 @@
 .PARAMETER Update
     Run gorepos update
 
+.PARAMETER SetupIncludes
+    Include path or URL to pass to 'gorepos setup --includes' (optional)
+
 .PARAMETER VerboseOutput
     Enable verbose output for all commands
 #>
@@ -62,6 +65,7 @@ param(
     [switch]$Groups,
     [switch]$Clone,
     [switch]$Update,
+    [string]$SetupIncludes = "",
     [switch]$VerboseOutput
 )
 
@@ -103,20 +107,25 @@ function Run-GoReposCommand {
     
     Write-Info "Running: $Description"
     
-    $Args = $Command.Split(' ')
+    # Split command into an argument array; use $cmdArgs to avoid shadowing
+    # PowerShell's automatic $Args variable.
+    $cmdArgs = [System.Collections.Generic.List[string]]::new()
+    foreach ($token in $Command.Split(' ')) {
+        if ($token -ne '') { $cmdArgs.Add($token) }
+    }
     
     # Add verbose flag if requested
     if ($VerboseOutput -and $Command -notmatch "--verbose") {
-        $Args += "--verbose"
+        $cmdArgs.Add("--verbose")
     }
     
     # Add config file unless skipped or it's a help command
     if (-not $SkipConfigFlag -and $Command -notmatch "help") {
-        $Args += "--config"
-        $Args += $ConfigFile
+        $cmdArgs.Add("--config")
+        $cmdArgs.Add($ConfigFile)
     }
     
-    Write-Host "  Command: gorepos $($Args -join ' ')" -ForegroundColor Gray
+    Write-Host "  Command: gorepos $($cmdArgs -join ' ')" -ForegroundColor Gray
     
     if ($VerboseOutput) {
         Write-Host "  Output:" -ForegroundColor Gray
@@ -124,14 +133,14 @@ function Run-GoReposCommand {
         # Set UTF-8 encoding to properly handle Unicode tree characters
         $PreviousEncoding = [Console]::OutputEncoding
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-        $Output = & gorepos @Args 2>&1
+        $Output = & gorepos @cmdArgs 2>&1
         [Console]::OutputEncoding = $PreviousEncoding
         if ($Output) {
             $Output | ForEach-Object { Write-Host "  $_" }
         }
         Write-Host "  ========" -ForegroundColor Gray
     } else {
-        & gorepos @Args *> $null
+        & gorepos @cmdArgs *> $null
     }
     $ExitCode = $LASTEXITCODE
     
@@ -215,8 +224,10 @@ if ($Setup) {
     
     $SetupArgs += "--base-path"
     $SetupArgs += $BasePath
-    $SetupArgs += "--includes"
-    $SetupArgs += "C:\Data\GIT\GitHub\gorepos\gorepos-config\gorepos.yaml"
+    if ($SetupIncludes -ne "") {
+        $SetupArgs += "--includes"
+        $SetupArgs += $SetupIncludes
+    }
     $SetupArgs += "--force"
     
     Write-Host "  Command: gorepos $($SetupArgs -join ' ')" -ForegroundColor Gray

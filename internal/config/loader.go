@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/LederWorks/gorepos/pkg/graph"
 	"github.com/LederWorks/gorepos/pkg/types"
@@ -133,7 +134,37 @@ func (l *Loader) loadConfigRecursiveWithHierarchy(path string, visited map[strin
 
 	// Process includes
 	for _, includePath := range config.Includes {
-		// Resolve relative paths
+		// Check if this is a URL include
+		if strings.HasPrefix(includePath, "http://") || strings.HasPrefix(includePath, "https://") {
+			includedConfig, err := l.LoadRemoteConfig(includePath)
+			if err != nil {
+				remoteNode := &FileNode{
+					Path:         includePath,
+					Repositories: []RepositoryInfo{},
+					IsValid:      false,
+					Includes:     []FileNode{},
+				}
+				node.Includes = append(node.Includes, *remoteNode)
+				return nil, node, fmt.Errorf("failed to load remote include %s: %w", includePath, err)
+			}
+			remoteNode := &FileNode{
+				Path:         includePath,
+				Repositories: []RepositoryInfo{},
+				IsValid:      true,
+				Includes:     []FileNode{},
+			}
+			for _, repo := range includedConfig.Repositories {
+				remoteNode.Repositories = append(remoteNode.Repositories, RepositoryInfo{
+					Name:     repo.Name,
+					Disabled: repo.Disabled,
+				})
+			}
+			node.Includes = append(node.Includes, *remoteNode)
+			config = l.mergeConfigs(&config, includedConfig)
+			continue
+		}
+
+		// Resolve relative paths for local files
 		if !filepath.IsAbs(includePath) {
 			includePath = filepath.Join(filepath.Dir(path), includePath)
 		}
@@ -141,9 +172,8 @@ func (l *Loader) loadConfigRecursiveWithHierarchy(path string, visited map[strin
 		// Load included config
 		includedConfig, includedNode, err := l.loadConfigRecursiveWithHierarchy(includePath, visited, processedFiles)
 		if err != nil {
-			// Add the invalid node to hierarchy but continue
 			node.Includes = append(node.Includes, *includedNode)
-			continue
+			return nil, node, fmt.Errorf("failed to load include %s: %w", includePath, err)
 		}
 
 		// Add included node to hierarchy
