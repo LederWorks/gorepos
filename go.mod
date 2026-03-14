@@ -1,12 +1,14 @@
 module github.com/LederWorks/gorepos
 
-go 1.25.5
+go 1.24.7
 
 require (
 	github.com/go-playground/validator/v10 v10.16.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/gabriel-vasile/mimetype => /home/user/mimetype-stub
 
 require (
 	github.com/gabriel-vasile/mimetype v1.4.2 // indirect
