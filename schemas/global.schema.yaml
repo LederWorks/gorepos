@@ -1,0 +1,104 @@
+# Global Configuration Schema
+# Defines the structure for global settings that apply to all repositories
+
+$schema: "http://json-schema.org/draft-07/schema#"
+title: "Global Configuration"
+description: "Schema for global settings in GoRepos configuration"
+type: object
+
+properties:
+  basePath:
+    type: string
+    description: "Base directory where repositories are located/cloned"
+    examples: ["/Users/username/Developer", "C:\\Projects", "~/git"]
+  
+  workers:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 10
+    description: "Number of parallel workers for repository operations"
+  
+  timeout:
+    type: string
+    pattern: "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+    default: "300s"
+    description: "Timeout duration for repository operations (e.g., '30s', '5m', '1h')"
+    examples: ["30s", "5m", "1h", "300s"]
+  
+  environment:
+    type: object
+    additionalProperties:
+      type: string
+    description: "Global environment variables for git operations"
+    examples:
+      - GIT_CONFIG_GLOBAL: "/path/to/gitconfig"
+        HTTP_PROXY: "http://proxy:8080"
+  
+  tags:
+    type: object
+    additionalProperties: true
+    description: "Global key-value tags applied to all repositories"
+    examples:
+      - company: "lederworks"
+        environment: "production"
+        team: "platform"
+  
+  labels:
+    type: array
+    items:
+      type: string
+    description: "Global simple labels applied to all repositories"
+    examples:
+      - ["critical", "monitored", "backup-required"]
+  
+  credentials:
+    $ref: "#/$defs/CredentialConfig"
+
+additionalProperties: false
+
+$defs:
+  CredentialConfig:
+    type: object
+    description: "Credential management configuration"
+    properties:
+      sshKeyPath:
+        type: string
+        description: "Path to SSH private key for git operations"
+        examples: ["~/.ssh/id_rsa", "/Users/username/.ssh/github_key"]
+      
+      gitCredHelper:
+        type: string
+        description: "Git credential helper command"
+        examples: ["manager", "cache --timeout=3600", "store"]
+      
+      tokenEnvVar:
+        type: string
+        description: "Environment variable containing authentication token"
+        examples: ["GITHUB_TOKEN", "GITLAB_TOKEN", "AZURE_DEVOPS_TOKEN"]
+    additionalProperties: false
+
+examples:
+  - # Minimal global config
+    basePath: "~/git"
+    workers: 5
+  
+  - # Comprehensive global config
+    basePath: "C:\\Data\\GIT"
+    workers: 8
+    timeout: "300s"
+    environment:
+      GIT_CONFIG_GLOBAL: ""
+      HTTP_PROXY: "http://proxy:8080"
+    credentials:
+      sshKeyPath: "~/.ssh/id_rsa"
+      gitCredHelper: "manager"
+      tokenEnvVar: "GITHUB_TOKEN"
+    tags:
+      company: "lederworks"
+      environment: "development"
+      team: "platform"
+    labels:
+      - "managed"
+      - "development"
+      - "automated"

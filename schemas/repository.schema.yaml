@@ -1,0 +1,110 @@
+# Repository Schema
+# Defines the structure for individual repository configurations
+
+$schema: "http://json-schema.org/draft-07/schema#"
+title: "Repository Configuration"
+description: "Schema for individual repository definitions in GoRepos"
+type: object
+
+required: ["name", "path", "url"]
+
+properties:
+  name:
+    type: string
+    minLength: 1
+    description: "Unique repository identifier"
+    examples: ["gorepos", "myproject", "terraform-modules"]
+  
+  path:
+    type: string
+    minLength: 1
+    description: "Repository path relative to basePath or absolute path"
+    examples: ["lederworks/gorepos", "personal/my-app", "terraform/modules"]
+  
+  url:
+    type: string
+    format: uri
+    description: "Git repository URL (HTTPS or SSH)"
+    examples: 
+      - "https://github.com/LederWorks/gorepos.git"
+      - "git@github.com:LederWorks/gorepos.git"
+      - "https://dev.azure.com/org/project/_git/repo"
+  
+  branch:
+    type: string
+    description: "Default branch to work with"
+    default: "main"
+    examples: ["main", "master", "develop", "feature/new-feature"]
+  
+  commands:
+    type: object
+    additionalProperties:
+      type: string
+    description: "Custom commands for this repository"
+    examples:
+      - update: "git pull --rebase"
+        test: "go test ./..."
+        build: "make build"
+  
+  environment:
+    type: object
+    additionalProperties:
+      type: string
+    description: "Repository-specific environment variables"
+    examples:
+      - CGO_ENABLED: "0"
+        GOOS: "linux"
+        GOARCH: "amd64"
+  
+  tags:
+    type: object
+    additionalProperties: true
+    description: "Key-value tags for this repository"
+    examples:
+      - language: "go"
+        type: "application"
+        priority: "high"
+        version: "1.0.0"
+  
+  labels:
+    type: array
+    items:
+      type: string
+    description: "Simple string labels for this repository"
+    examples:
+      - ["production", "api", "microservice"]
+      - ["documentation", "public"]
+  
+  disabled:
+    type: boolean
+    default: false
+    description: "Whether this repository is disabled for operations"
+
+additionalProperties: false
+
+examples:
+  - # Minimal repository
+    name: "simple-project"
+    path: "personal/simple"
+    url: "https://github.com/user/simple.git"
+  
+  - # Full repository configuration
+    name: "gorepos"
+    path: "lederworks/gorepos"
+    url: "https://github.com/LederWorks/gorepos.git"
+    branch: "main"
+    commands:
+      test: "go test ./..."
+      build: "go build ./cmd/gorepos"
+      lint: "golangci-lint run"
+    environment:
+      CGO_ENABLED: "0"
+      GOOS: "linux"
+    tags:
+      language: "go"
+      type: "cli-tool"
+      priority: "high"
+    labels:
+      - "automation"
+      - "repository-management"
+    disabled: false

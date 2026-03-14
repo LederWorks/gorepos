@@ -16,8 +16,9 @@ const (
 	NodeTypeRepository NodeType = "repository"
 	NodeTypeGroup      NodeType = "group"
 	NodeTypeTemplate   NodeType = "template"
-	NodeTypeTag        NodeType = "tag"   // Key-value tag nodes
-	NodeTypeLabel      NodeType = "label" // Simple label nodes
+	NodeTypeTag        NodeType = "tag"     // Key-value tag nodes
+	NodeTypeLabel      NodeType = "label"   // Simple label nodes
+	NodeTypeContext    NodeType = "context" // Path context for directory-based filtering
 	// Extensible for future types like deployment, pipeline, etc.
 )
 
@@ -33,6 +34,7 @@ const (
 	RelationTriggers    RelationType = "triggers"
 	RelationTaggedWith  RelationType = "tagged_with"  // Entity has tag
 	RelationLabeledWith RelationType = "labeled_with" // Entity has label
+	RelationContainedIn RelationType = "contained_in" // Repository is contained in context path
 	// Extensible for future relationship types
 )
 
@@ -57,11 +59,12 @@ type GraphNode struct {
 	IsExplicit   bool   `json:"is_explicit"`   // true for explicitly defined entities
 
 	// Content references
-	Config     *types.Config     `json:"-"`
-	Repository *types.Repository `json:"-"`
-	Group      *GroupDefinition  `json:"-"`
-	Tag        *TagDefinition    `json:"-"`
-	Label      *LabelDefinition  `json:"-"`
+	Config     *types.Config      `json:"-"`
+	Repository *types.Repository  `json:"-"`
+	Group      *GroupDefinition   `json:"-"`
+	Tag        *TagDefinition     `json:"-"`
+	Label      *LabelDefinition   `json:"-"`
+	Context    *ContextDefinition `json:"-"`
 
 	// Properties and extensions
 	Properties map[string]interface{} `json:"properties"`
@@ -90,6 +93,15 @@ type LabelDefinition struct {
 	Name       string `json:"name"`
 	Scope      string `json:"scope"`       // "global" or "repository"
 	SourceType string `json:"source_type"` // "explicit" or "inherited"
+}
+
+// ContextDefinition contains context-specific information for path-based filtering
+type ContextDefinition struct {
+	Path         string `json:"path"`          // The directory path this context represents
+	RelativePath string `json:"relative_path"` // Path relative to base path
+	IsActive     bool   `json:"is_active"`     // Whether this is the current working context
+	RepoCount    int    `json:"repo_count"`    // Number of repositories in this context
+	Depth        int    `json:"depth"`         // Directory depth from base path
 }
 
 // Relationship represents a connection between two nodes

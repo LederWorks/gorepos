@@ -1,0 +1,40 @@
+# Groups Schema
+# Defines the structure for repository groups in GoRepos configuration
+
+$schema: "http://json-schema.org/draft-07/schema#"
+title: "Repository Groups Configuration"
+description: "Schema for defining named groups of repositories for batch operations"
+type: object
+
+additionalProperties:
+  type: array
+  items:
+    type: string
+    description: "Repository name that belongs to this group"
+  description: "List of repository names in this group"
+
+examples:
+  - # Development workflow groups
+    frontend: ["web-app", "mobile-app", "admin-ui"]
+    backend: ["api-server", "auth-service", "data-processor"]
+    infrastructure: ["terraform-modules", "docker-images", "kubernetes-manifests"]
+    
+  - # Technology-based groups  
+    go-projects: ["gorepos", "api-server", "cli-tool"]
+    python-projects: ["data-pipeline", "ml-models", "automation-scripts"]
+    terraform: ["aws-infrastructure", "gcp-infrastructure", "modules"]
+    
+  - # Environment groups
+    production: ["core-api", "web-frontend", "payment-service"]
+    staging: ["staging-api", "test-frontend"]
+    development: ["dev-tools", "prototypes", "experiments"]
+    
+  - # Team-based groups
+    platform-team: ["infrastructure", "monitoring", "ci-cd"]
+    frontend-team: ["web-app", "mobile-app", "design-system"]
+    backend-team: ["api-gateway", "microservices", "databases"]
+    
+  - # Operational groups
+    critical: ["payment-api", "user-auth", "core-database"]
+    monitoring: ["prometheus-config", "grafana-dashboards", "alerting"]
+    backup-required: ["user-data", "transaction-logs", "configuration"]

@@ -1,0 +1,103 @@
+# GoRepos Configuration Schema
+# This schema defines the structure and validation rules for gorepos configuration files
+# Uses modular schema references for maintainability
+
+$schema: "http://json-schema.org/draft-07/schema#"
+title: "GoRepos Configuration"
+description: "Configuration schema for GoRepos repository management tool"
+type: object
+
+properties:
+  version:
+    type: string
+    enum: ["1.0"]
+    description: "Configuration file format version"
+    default: "1.0"
+
+  includes:
+    type: array
+    items:
+      type: string
+      description: "Path to another configuration file to include (relative or absolute local paths, or HTTP/HTTPS URLs)"
+    description: "List of configuration files to include and merge (local paths and HTTP/HTTPS URLs are supported)"
+    examples:
+      - ["./configs/github.yaml", "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"]
+
+  global:
+    $ref: "global.schema.yaml"
+    description: "Global settings that apply to all repositories"
+
+  repositories:
+    type: array
+    description: "List of repository definitions"
+    items:
+      $ref: "repository.schema.yaml"
+
+  groups:
+    $ref: "groups.schema.yaml"
+    description: "Named groups of repositories for batch operations"
+
+  templates:
+    $ref: "templates.schema.yaml" 
+    description: "Template definitions for generating repository content (planned feature)"
+
+required: []
+additionalProperties: false
+
+examples:
+  - # Minimal configuration
+    version: "1.0"
+    global:
+      basePath: "~/git"
+    repositories:
+      - name: "my-project"
+        path: "personal/my-project"
+        url: "https://github.com/username/my-project.git"
+  
+  - # Full configuration example
+    version: "1.0"
+    includes:
+      - "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"
+    
+    global:
+      basePath: "C:\\Data\\GIT"
+      workers: 8
+      timeout: "300s"
+      environment:
+        GIT_CONFIG_GLOBAL: ""
+      credentials:
+        sshKeyPath: "~/.ssh/id_rsa"
+      tags:
+        company: "lederworks"
+        environment: "development"
+      labels:
+        - "managed"
+        - "development"
+    
+    repositories:
+      - name: "gorepos"
+        path: "lederworks/gorepos"
+        url: "https://github.com/LederWorks/gorepos.git"
+        branch: "main"
+        tags:
+          language: "go"
+          type: "tool"
+        labels:
+          - "cli"
+          - "automation"
+      
+      - name: "docs-site"
+        path: "company/documentation"
+        url: "https://github.com/company/docs.git"
+        branch: "main"
+        disabled: false
+        commands:
+          build: "hugo"
+          serve: "hugo serve"
+        environment:
+          HUGO_ENV: "production"
+    
+    groups:
+      tools: ["gorepos"]
+      documentation: ["docs-site"]
+      all: ["gorepos", "docs-site"]
