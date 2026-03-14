@@ -41,7 +41,7 @@ v1.2.3-5-g1a2b3c4        # 5 commits after v1.2.3
 
 **Strategy**:
 - SHA256 hash of all Go source files + `go.mod` + `go.sum`
-- Format: `content-[8-char-hash]-[timestamp]`
+- Format: `[8-char-hash]-local`
 - Independent of git history and uncommitted changes
 
 **Best For**:
@@ -52,8 +52,8 @@ v1.2.3-5-g1a2b3c4        # 5 commits after v1.2.3
 
 **Example Outputs**:
 ```bash
-content-a1b2c3d4-20260121-1430    # Content hash + timestamp
-content-e5f6g7h8-20260121-1445    # Different content, same time
+a1b2c3d4-local    # Content hash with -local suffix
+e5f6g7h8-local    # Different content produces a different hash
 ```
 
 **Benefits**:
@@ -91,9 +91,9 @@ The content-based versioning system:
    - Calculates SHA256 hash
    - Takes first 8 characters (lowercase)
 
-3. **Adds Timestamp**:
-   - Format: `YYYYMMDD-HHMM`
-   - Ensures uniqueness even for identical content
+3. **Appends `-local` suffix**:
+   - Format: `[8-char-hash]-local`
+   - Clearly identifies locally-built binaries
 
 ### Cross-Platform Compatibility
 
@@ -101,9 +101,8 @@ Both PowerShell (`build.ps1`) and Bash (`build.sh`) scripts implement identical 
 
 | Feature | PowerShell | Bash |
 |---------|------------|------|
-| Content hashing | ✅ SHA256 | ✅ sha256sum |
+| Content hashing | ✅ SHA256 | ✅ sha256sum / shasum / openssl |
 | Git integration | ✅ | ✅ |
-| Timestamp format | ✅ | ✅ |
 | Error handling | ✅ | ✅ |
 
 ## 📋 Usage Examples
@@ -114,7 +113,7 @@ Both PowerShell (`build.ps1`) and Bash (`build.sh`) scripts implement identical 
 # Quick iteration with content-based versioning
 ./scripts/build.sh --content-hash --target linux
 
-# Output: content-a1b2c3d4-20260121-1430
+# Output: a1b2c3d4-local
 # Same content = same version, regardless of git state
 ```
 
