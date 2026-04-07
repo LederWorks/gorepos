@@ -63,6 +63,7 @@ type Result struct {
 	Error      error
 	Duration   time.Duration
 	StartTime  time.Time
+	StatusData *RepoStatus // populated only for "status" operations
 }
 
 // RepositoryManager interface for repository operations

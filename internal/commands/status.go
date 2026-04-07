@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -49,7 +50,7 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 
 	ctx := context.Background()
 	repoManager := repository.NewManager(cfg.Global.BasePath)
-	exec := executor.NewPool(cfg.Global.Workers)
+	exec := executor.NewPool(cfg.Global.Workers, repoManager)
 
 	fmt.Printf("GoRepos Status (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
@@ -87,20 +88,20 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 		return nil
 	}
 
-	// Execute status operations
+	// Execute status operations and consume results from the parallel channel
 	results := exec.Execute(ctx, operations)
 
-	// Process results
+	var errs []error
 	for result := range results {
 		fmt.Printf("\n%s:\n", result.Repository.Name)
 
-		// Get actual repository status using the repository manager
-		status, err := repoManager.Status(ctx, result.Repository)
-		if err != nil {
-			fmt.Printf("  Error: %v\n", err)
+		if !result.Success || result.StatusData == nil {
+			fmt.Printf("  Error: %v\n", result.Error)
+			errs = append(errs, result.Error)
 			continue
 		}
 
+		status := result.StatusData
 		fmt.Printf("  Path: %s\n", status.Path)
 		fmt.Printf("  Branch: %s\n", status.CurrentBranch)
 
@@ -108,7 +109,7 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 			fmt.Printf("  Status: Clean\n")
 		} else {
 			fmt.Printf("  Status: %d uncommitted files\n", len(status.UncommittedFiles))
-			if verbose {
+			if s.verbose {
 				for _, file := range status.UncommittedFiles {
 					fmt.Printf("    - %s\n", file)
 				}
@@ -124,7 +125,10 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 		}
 	}
 
-	return exec.Shutdown(ctx)
+	if shutdownErr := exec.Shutdown(ctx); shutdownErr != nil {
+		errs = append(errs, shutdownErr)
+	}
+	return errors.Join(errs...)
 }
 
 // loadConfigWithVerbose loads configuration with details

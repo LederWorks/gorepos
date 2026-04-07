@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/LederWorks/gorepos/pkg/types"
 )
@@ -11,6 +12,7 @@ import (
 // Pool implements the Executor interface with a worker pool
 type Pool struct {
 	workerCount int
+	manager     types.RepositoryManager
 	workers     []*worker
 	mu          sync.RWMutex
 	started     bool
@@ -25,10 +27,11 @@ type worker struct {
 	wg      *sync.WaitGroup
 }
 
-// NewPool creates a new executor pool
-func NewPool(workerCount int) *Pool {
+// NewPool creates a new executor pool with the given repository manager
+func NewPool(workerCount int, manager types.RepositoryManager) *Pool {
 	return &Pool{
 		workerCount: workerCount,
+		manager:     manager,
 	}
 }
 
@@ -100,40 +103,59 @@ func (p *Pool) worker(ctx context.Context, id int, jobs <-chan types.Operation, 
 	}
 }
 
-// executeOperation executes a single operation
+// executeOperation executes a single operation using the repository manager
 func (p *Pool) executeOperation(ctx context.Context, op *types.Operation) *types.Result {
-	// This is a simplified execution - in practice, this would delegate to
-	// the appropriate service (repository manager, etc.)
-
 	result := &types.Result{
 		Repository: op.Repository,
 		Operation:  op.Command,
+		StartTime:  time.Now(),
 	}
 
-	// Check context cancellation
 	if ctx.Err() != nil {
 		result.Error = ctx.Err()
 		result.Success = false
+		result.Duration = time.Since(result.StartTime)
 		return result
 	}
 
-	// For now, we'll just simulate the operation
-	// In a real implementation, this would call the appropriate manager
 	switch op.Command {
 	case "clone":
-		result.Output = fmt.Sprintf("Would clone %s to %s", op.Repository.URL, op.Repository.Path)
-		result.Success = true
+		err := p.manager.Clone(ctx, op.Repository)
+		if err != nil {
+			result.Error = fmt.Errorf("clone %s: %w", op.Repository.Name, err)
+			result.Success = false
+		} else {
+			result.Output = fmt.Sprintf("cloned %s to %s", op.Repository.URL, op.Repository.Path)
+			result.Success = true
+		}
+
 	case "update":
-		result.Output = fmt.Sprintf("Would update repository at %s", op.Repository.Path)
-		result.Success = true
+		err := p.manager.Update(ctx, op.Repository)
+		if err != nil {
+			result.Error = fmt.Errorf("update %s: %w", op.Repository.Name, err)
+			result.Success = false
+		} else {
+			result.Output = fmt.Sprintf("updated %s", op.Repository.Name)
+			result.Success = true
+		}
+
 	case "status":
-		result.Output = fmt.Sprintf("Would check status of repository at %s", op.Repository.Path)
-		result.Success = true
+		status, err := p.manager.Status(ctx, op.Repository)
+		if err != nil {
+			result.Error = fmt.Errorf("status %s: %w", op.Repository.Name, err)
+			result.Success = false
+		} else {
+			result.StatusData = status
+			result.Output = fmt.Sprintf("status of %s retrieved", op.Repository.Name)
+			result.Success = true
+		}
+
 	default:
 		result.Error = fmt.Errorf("unknown operation: %s", op.Command)
 		result.Success = false
 	}
 
+	result.Duration = time.Since(result.StartTime)
 	return result
 }
 

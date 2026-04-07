@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/LederWorks/gorepos/internal/commands"
 	"github.com/LederWorks/gorepos/internal/config"
@@ -229,7 +231,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 	repoManager := repository.NewManager(cfg.Global.BasePath)
-	exec := executor.NewPool(cfg.Global.Workers)
+	exec := executor.NewPool(cfg.Global.Workers, repoManager)
 
 	fmt.Printf("GoRepos Update (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
@@ -276,18 +278,21 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Execute update operations
-	for _, repo := range updatedRepos {
-		fmt.Printf("Updating %s...", repo.Name)
-		err := repoManager.Update(ctx, repo)
-		if err != nil {
-			fmt.Printf(" ERROR: %v\n", err)
+	// Execute update operations in parallel
+	results := exec.Execute(ctx, operations)
+	var errs []error
+	for result := range results {
+		if result.Success {
+			fmt.Printf("[%s] OK (%s)\n", result.Repository.Name, result.Duration.Round(time.Millisecond))
 		} else {
-			fmt.Printf(" OK\n")
+			fmt.Printf("[%s] ERROR: %v\n", result.Repository.Name, result.Error)
+			errs = append(errs, result.Error)
 		}
 	}
-
-	return exec.Shutdown(ctx)
+	if shutdownErr := exec.Shutdown(ctx); shutdownErr != nil {
+		errs = append(errs, shutdownErr)
+	}
+	return errors.Join(errs...)
 }
 
 // runClone executes the clone command
@@ -304,7 +309,7 @@ func runClone(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 	repoManager := repository.NewManager(cfg.Global.BasePath)
-	exec := executor.NewPool(cfg.Global.Workers)
+	exec := executor.NewPool(cfg.Global.Workers, repoManager)
 
 	fmt.Printf("GoRepos Clone (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
@@ -353,18 +358,21 @@ func runClone(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Execute clone operations
-	for _, repo := range clonedRepos {
-		fmt.Printf("Cloning %s...", repo.Name)
-		err := repoManager.Clone(ctx, repo)
-		if err != nil {
-			fmt.Printf(" ERROR: %v\n", err)
+	// Execute clone operations in parallel
+	results := exec.Execute(ctx, operations)
+	var errs []error
+	for result := range results {
+		if result.Success {
+			fmt.Printf("[%s] OK (%s)\n", result.Repository.Name, result.Duration.Round(time.Millisecond))
 		} else {
-			fmt.Printf(" OK\n")
+			fmt.Printf("[%s] ERROR: %v\n", result.Repository.Name, result.Error)
+			errs = append(errs, result.Error)
 		}
 	}
-
-	return exec.Shutdown(ctx)
+	if shutdownErr := exec.Shutdown(ctx); shutdownErr != nil {
+		errs = append(errs, shutdownErr)
+	}
+	return errors.Join(errs...)
 }
 
 // runValidate executes the validate command
