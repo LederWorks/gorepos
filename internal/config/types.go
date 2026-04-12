@@ -31,11 +31,14 @@ type FileNode struct {
 // SetupOptions contains options for the setup command
 type SetupOptions struct {
 	Force    bool
+	DryRun   bool
 	Path     string   // Custom path for the configuration file
 	BasePath string
 	Includes []string // Include paths or URLs to embed in the configuration
 	Workers  int
 	Timeout  time.Duration
+	User     string // Git user.name for remote repo includes (non-interactive mode)
+	Email    string // Git user.email for remote repo includes (non-interactive mode)
 }
 
 // Loader implements the ConfigLoader interface

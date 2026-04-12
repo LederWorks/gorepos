@@ -1,6 +1,7 @@
 package config
 
 import (
+	"sort"
 	"time"
 
 	"github.com/LederWorks/gorepos/pkg/types"
@@ -49,6 +50,9 @@ func (l *Loader) mergeConfigs(main *types.Config, included *types.Config) types.
 	for _, repo := range repoMap {
 		result.Repositories = append(result.Repositories, repo)
 	}
+	sort.Slice(result.Repositories, func(i, j int) bool {
+		return result.Repositories[i].Name < result.Repositories[j].Name
+	})
 
 	// Merge groups (no inheritance during merge phase)
 	if result.Groups == nil {
@@ -95,12 +99,16 @@ func (l *Loader) applyRootGroupInheritance(config *types.Config) {
 
 // setDefaults sets default values for configuration
 func (l *Loader) setDefaults(config *types.Config) {
+	// Set default version if not specified
+	if config.Version == "" {
+		config.Version = "1.0"
+	}
 	// Set default global values if not specified
 	if config.Global.Workers == 0 {
-		config.Global.Workers = 4
+		config.Global.Workers = 10
 	}
 	if config.Global.Timeout == 0 {
-		config.Global.Timeout = 30 * time.Second
+		config.Global.Timeout = 5 * time.Minute
 	}
 
 	// Set default branch for repositories if not specified

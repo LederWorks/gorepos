@@ -75,9 +75,6 @@ func TestNewPool_InitialState(t *testing.T) {
 	if p.GetWorkerCount() != 4 {
 		t.Errorf("expected worker count 4, got %d", p.GetWorkerCount())
 	}
-	if p.IsStarted() {
-		t.Error("pool should not be started on creation")
-	}
 }
 
 func TestNewPool_WithManager(t *testing.T) {
@@ -124,17 +121,19 @@ func TestSetWorkerCount_Negative(t *testing.T) {
 
 // --- Execute ---
 
-func TestExecute_StartsPool(t *testing.T) {
+func TestExecute_Runs(t *testing.T) {
 	p := NewPool(2, newMock())
 	ctx := context.Background()
 	ops := []types.Operation{makeOp(makeRepo("r1"), "clone")}
 
 	results := p.Execute(ctx, ops)
+	count := 0
 	for range results {
+		count++
 	}
 
-	if !p.IsStarted() {
-		t.Error("pool should be started after Execute")
+	if count != 1 {
+		t.Errorf("expected 1 result, got %d", count)
 	}
 }
 

@@ -1,0 +1,123 @@
+package commands
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/LederWorks/gorepos/pkg/types"
+)
+
+func makeTestRepo(name, path string) types.Repository {
+	return types.Repository{Name: name, Path: path, URL: "https://github.com/example/" + name + ".git"}
+}
+
+// --- FilterRepositoriesByContext ---
+
+func TestFilterRepositoriesByContext_AtBasePath_ReturnsAll(t *testing.T) {
+	dir := t.TempDir()
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "org/b"),
+	}
+
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	os.Chdir(dir)
+
+	result := FilterRepositoriesByContext(repos, dir)
+	if len(result) != 2 {
+		t.Errorf("expected 2 repos, got %d", len(result))
+	}
+}
+
+func TestFilterRepositoriesByContext_OutsideBasePath_ReturnsAll(t *testing.T) {
+	basePath := t.TempDir()
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "org/b"),
+	}
+
+	// CWD is a completely different temp dir
+	cwd := t.TempDir()
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	os.Chdir(cwd)
+
+	result := FilterRepositoriesByContext(repos, basePath)
+	if len(result) != 2 {
+		t.Errorf("expected 2 repos when outside basePath, got %d", len(result))
+	}
+}
+
+func TestFilterRepositoriesByContext_InSubdir_FiltersToSubtree(t *testing.T) {
+	basePath := t.TempDir()
+	subDir := filepath.Join(basePath, "org")
+	os.MkdirAll(subDir, 0755)
+
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "other/b"),
+		makeTestRepo("c", "org/c"),
+	}
+
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	os.Chdir(subDir)
+
+	result := FilterRepositoriesByContext(repos, basePath)
+	if len(result) != 2 {
+		t.Errorf("expected 2 repos in 'org' subtree, got %d", len(result))
+	}
+	for _, r := range result {
+		if r.Name == "b" {
+			t.Errorf("repo 'b' (other/b) should have been filtered out")
+		}
+	}
+}
+
+func TestFilterRepositoriesByContext_EmptyRepos_ReturnsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	os.Chdir(dir)
+
+	result := FilterRepositoriesByContext(nil, dir)
+	if len(result) != 0 {
+		t.Errorf("expected 0 repos, got %d", len(result))
+	}
+}
+
+// --- GetContextRepositoryNames ---
+
+func TestGetContextRepositoryNames_AtBasePath_ReturnsAll(t *testing.T) {
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "org/b"),
+	}
+	names := GetContextRepositoryNames(repos, "/base", "/base")
+	if len(names) != 2 {
+		t.Errorf("expected 2 names at base path, got %d", len(names))
+	}
+}
+
+func TestGetContextRepositoryNames_InSubdir_FiltersToMatchingRepos(t *testing.T) {
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "other/b"),
+	}
+	names := GetContextRepositoryNames(repos, "/base", "/base/org")
+	if len(names) != 1 || names[0] != "a" {
+		t.Errorf("expected [a], got %v", names)
+	}
+}
+
+func TestGetContextRepositoryNames_NoMatch_ReturnsEmpty(t *testing.T) {
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+	}
+	names := GetContextRepositoryNames(repos, "/base", "/base/unrelated")
+	if len(names) != 0 {
+		t.Errorf("expected empty, got %v", names)
+	}
+}

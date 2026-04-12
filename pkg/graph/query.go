@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -601,8 +602,8 @@ func (g *RepositoryGraphImpl) GetRepositoriesByContext(contextPath string) []*Gr
 	for _, repo := range repositories {
 		if repo.Repository != nil {
 			// Normalize paths for comparison
-			repoPath := strings.ReplaceAll(repo.Repository.Path, "\\", "/")
-			context := strings.ReplaceAll(contextPath, "\\", "/")
+			repoPath := filepath.ToSlash(repo.Repository.Path)
+			context := filepath.ToSlash(contextPath)
 
 			// Check if repository path starts with context path
 			if strings.HasPrefix(repoPath, context) {
@@ -617,8 +618,8 @@ func (g *RepositoryGraphImpl) GetRepositoriesByContext(contextPath string) []*Gr
 // GetContextForPath creates or finds a context node for the given path
 func (g *RepositoryGraphImpl) GetContextForPath(basePath, currentPath string) *GraphNode {
 	// Calculate relative path from base
-	basePath = strings.ReplaceAll(basePath, "\\", "/")
-	currentPath = strings.ReplaceAll(currentPath, "\\", "/")
+	basePath = filepath.ToSlash(basePath)
+	currentPath = filepath.ToSlash(currentPath)
 
 	var relativePath string
 	if !strings.HasPrefix(currentPath, basePath) || currentPath == basePath {
@@ -665,7 +666,7 @@ func (g *RepositoryGraphImpl) FilterRepositoriesByGraphContext(basePath, current
 	for _, repo := range allRepositories {
 		if repo.Repository != nil {
 			// Calculate repository's relative path from base
-			repoPath := strings.ReplaceAll(repo.Repository.Path, "\\", "/")
+			repoPath := filepath.ToSlash(repo.Repository.Path)
 			repoRelative := strings.TrimPrefix(repoPath, basePath)
 			repoRelative = strings.TrimPrefix(repoRelative, "/")
 

@@ -8,7 +8,6 @@ import (
 
 	"github.com/LederWorks/gorepos/internal/config"
 	"github.com/LederWorks/gorepos/internal/display"
-	"github.com/LederWorks/gorepos/pkg/types"
 )
 
 // GraphCommand handles the graph command functionality
@@ -21,7 +20,7 @@ func NewGraphCommand() *GraphCommand {
 
 // Execute runs the graph command
 func (c *GraphCommand) Execute(cfgFile string, verbose bool) error {
-	result, err := c.loadConfigWithVerbose(cfgFile, verbose)
+	result, err := LoadConfigWithVerbose(cfgFile, verbose)
 	if err != nil {
 		return err
 	}
@@ -32,8 +31,8 @@ func (c *GraphCommand) Execute(cfgFile string, verbose bool) error {
 
 	if err == nil {
 		// Normalize paths for comparison
-		basePath := strings.ReplaceAll(result.Config.Global.BasePath, "\\", "/")
-		currentPath := strings.ReplaceAll(cwd, "\\", "/")
+		basePath := filepath.ToSlash(result.Config.Global.BasePath)
+		currentPath := filepath.ToSlash(cwd)
 
 		// Check if we're within the basePath
 		if strings.HasPrefix(currentPath, basePath) {
@@ -43,7 +42,7 @@ func (c *GraphCommand) Execute(cfgFile string, verbose bool) error {
 
 			if relPath != "" {
 				// We're in a subdirectory, get context repository names for filtering
-				contextRepoNames = c.getContextRepositoryNames(result.Config.Repositories, basePath, currentPath)
+				contextRepoNames = GetContextRepositoryNames(result.Config.Repositories, basePath, currentPath)
 			}
 		}
 	}
@@ -82,77 +81,6 @@ func (c *GraphCommand) Execute(cfgFile string, verbose bool) error {
 	}
 
 	return nil
-}
-
-// loadConfigWithVerbose loads configuration with verbose output if enabled
-func (c *GraphCommand) loadConfigWithVerbose(cfgFile string, verbose bool) (*config.ConfigLoadResult, error) {
-	loader := config.NewLoader()
-
-	// Get config file path
-	configPath := cfgFile
-	if configPath == "" {
-		var err error
-		configPath, err = config.GetConfigPath()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if verbose {
-		fmt.Printf("Loading configuration from: %s\n", configPath)
-		fmt.Println()
-	}
-
-	// Load configuration with details
-	result, err := loader.LoadConfigWithDetails(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	return result, nil
-}
-
-// getContextRepositoryNames extracts repository names that are relevant to the current directory context
-func (c *GraphCommand) getContextRepositoryNames(repositories []types.Repository, basePath, currentPath string) []string {
-	// Implementation similar to groups command
-	var contextRepos []string
-
-	// Get relative path from basePath
-	relPath := strings.TrimPrefix(currentPath, basePath)
-	relPath = strings.TrimPrefix(relPath, "/")
-	relPath = strings.TrimPrefix(relPath, "\\")
-
-	if relPath == "" {
-		// At base path, include all repositories
-		for _, repo := range repositories {
-			contextRepos = append(contextRepos, repo.Name)
-		}
-		return contextRepos
-	}
-
-	// Normalize path separators
-	relPath = strings.ReplaceAll(relPath, "\\", "/")
-
-	for _, repo := range repositories {
-		// Normalize repository path
-		repoPath := strings.ReplaceAll(repo.Path, "\\", "/")
-		repoDir := filepath.Dir(repoPath)
-		if repoDir == "." {
-			repoDir = ""
-		}
-
-		// Check if repository is in current context
-		if repoDir == "" {
-			// Repository at base level
-			continue
-		}
-
-		if strings.HasPrefix(repoDir, relPath) || strings.HasPrefix(relPath, repoDir) {
-			contextRepos = append(contextRepos, repo.Name)
-		}
-	}
-
-	return contextRepos
 }
 
 // convertToDisplayNodes converts config FileNode to display FileNode

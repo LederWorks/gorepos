@@ -14,13 +14,28 @@ import (
 
 // GraphBuilder constructs repository graphs from configuration hierarchies
 type GraphBuilder struct {
-	visited map[string]bool // Track visited files to prevent cycles
+	visited      map[string]bool // Track visited files to prevent cycles
+	repoLoader   func(repoURL, ref, file string) (*types.Config, error) // optional; nil = skip repo: includes
+	rawURLLoader func(url string) (*types.Config, error)                // optional; nil = skip raw URL includes
 }
 
-// NewGraphBuilder creates a new graph builder
+// NewGraphBuilder creates a new graph builder without remote loading capability.
 func NewGraphBuilder() *GraphBuilder {
 	return &GraphBuilder{
 		visited: make(map[string]bool),
+	}
+}
+
+// NewGraphBuilderWithLoaders creates a graph builder that can fetch remote includes.
+// repoLoader handles structured repo: includes (via git); rawURLLoader handles plain HTTP URLs.
+func NewGraphBuilderWithLoaders(
+	repoLoader func(repoURL, ref, file string) (*types.Config, error),
+	rawURLLoader func(url string) (*types.Config, error),
+) *GraphBuilder {
+	return &GraphBuilder{
+		visited:      make(map[string]bool),
+		repoLoader:   repoLoader,
+		rawURLLoader: rawURLLoader,
 	}
 }
 
@@ -116,17 +131,94 @@ func (b *GraphBuilder) buildConfigHierarchy(configPath string, parentNode *Graph
 
 	// Process includes recursively
 	configDir := filepath.Dir(absPath)
-	for _, include := range config.Includes {
-		includePath := include
-		if !filepath.IsAbs(include) {
-			includePath = filepath.Join(configDir, include)
-		}
-
-		if err := b.buildConfigHierarchy(includePath, configNode, graph); err != nil {
-			return fmt.Errorf("failed to build included hierarchy %s: %w", includePath, err)
-		}
+	if err := b.processIncludes(config, configDir, configNode, graph); err != nil {
+		return err
 	}
 
+	return nil
+}
+
+// buildConfigHierarchyFromConfig builds a graph hierarchy from an already-loaded config.
+// Used for remote includes where the config was fetched externally.
+// displayPath is used as a unique key for cycle detection.
+func (b *GraphBuilder) buildConfigHierarchyFromConfig(displayPath string, config *types.Config, parentNode *GraphNode, graph *RepositoryGraphImpl) error {
+	if b.visited[displayPath] {
+		return fmt.Errorf("circular dependency detected: %s", displayPath)
+	}
+	b.visited[displayPath] = true
+	defer func() { b.visited[displayPath] = false }()
+
+	configNode := b.createConfigNode(displayPath, config, parentNode)
+	if err := graph.AddNode(configNode); err != nil {
+		return fmt.Errorf("failed to add config node: %w", err)
+	}
+	parentNode.AddChild(configNode)
+
+	parentChildRel := NewRelationship(
+		fmt.Sprintf("pc_%s_%s", parentNode.ID, configNode.ID),
+		parentNode, configNode, RelationParentChild,
+	)
+	if err := graph.AddRelationship(parentChildRel); err != nil {
+		return fmt.Errorf("failed to add parent-child relationship: %w", err)
+	}
+
+	// Remote configs may themselves have remote sub-includes; local relative paths
+	// cannot be resolved without a base dir, so we skip local includes here.
+	if err := b.processIncludes(config, "", configNode, graph); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// processIncludes handles the includes list for a loaded config.
+// baseDir is used to resolve relative local paths; pass "" to skip local includes.
+func (b *GraphBuilder) processIncludes(config *types.Config, baseDir string, parentNode *GraphNode, graph *RepositoryGraphImpl) error {
+	for _, include := range config.Includes {
+		switch {
+		case include.IsRemoteRepo():
+			if b.repoLoader == nil {
+				continue // no loader injected — skip silently
+			}
+			includedConfig, err := b.repoLoader(include.Repo, include.Ref, include.GetFile())
+			if err != nil {
+				return fmt.Errorf("failed to load remote include %s: %w", include.String(), err)
+			}
+			// Apply include-level identity to repos that lack their own
+			includedConfig.ApplyIncludeIdentity(include.User, include.Email)
+			if err := b.buildConfigHierarchyFromConfig(include.String(), includedConfig, parentNode, graph); err != nil {
+				return fmt.Errorf("failed to build included hierarchy %s: %w", include.String(), err)
+			}
+
+		case include.IsRawURL():
+			if b.rawURLLoader == nil {
+				continue // no loader injected — skip silently
+			}
+			includedConfig, err := b.rawURLLoader(include.Path)
+			if err != nil {
+				return fmt.Errorf("failed to load remote include %s: %w", include.Path, err)
+			}
+			if err := b.buildConfigHierarchyFromConfig(include.Path, includedConfig, parentNode, graph); err != nil {
+				return fmt.Errorf("failed to build included hierarchy %s: %w", include.Path, err)
+			}
+
+		default:
+			if baseDir == "" {
+				continue // no base dir — cannot resolve relative local paths
+			}
+			includePath := include.Path
+			if !filepath.IsAbs(includePath) {
+				includePath = filepath.Join(baseDir, includePath)
+			}
+			// If the path is a directory, look for gorepos.yaml inside it
+			if info, err := os.Stat(includePath); err == nil && info.IsDir() {
+				includePath = filepath.Join(includePath, "gorepos.yaml")
+			}
+			if err := b.buildConfigHierarchy(includePath, parentNode, graph); err != nil {
+				return fmt.Errorf("failed to build included hierarchy %s: %w", includePath, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -232,9 +324,21 @@ func (b *GraphBuilder) processRepositories(graph *RepositoryGraphImpl) error {
 				// Create repository node
 				repoNode := b.createRepositoryNode(&repo, configNode)
 
-				// Add repository node to graph
-				if err := graph.AddNode(repoNode); err != nil {
-					return fmt.Errorf("failed to add repository node %s: %w", repoNode.ID, err)
+				// Upsert: if a node with this ID already exists, update it (last-write-wins)
+				if existing := graph.GetNode(repoNode.ID); existing != nil {
+					existing.Repository = repoNode.Repository
+					existing.Path = repoNode.Path
+					existing.FullPath = repoNode.FullPath
+					existing.Level = repoNode.Level
+					existing.Properties = repoNode.Properties
+					existing.Tags = repoNode.Tags
+					existing.Templates = repoNode.Templates
+					repoNode = existing
+				} else {
+					// Add repository node to graph
+					if err := graph.AddNode(repoNode); err != nil {
+						return fmt.Errorf("failed to add repository node %s: %w", repoNode.ID, err)
+					}
 				}
 
 				// Create relationship: config defines repository
@@ -425,7 +529,9 @@ func (b *GraphBuilder) processTagsAndLabels(graph *RepositoryGraphImpl) error {
 						}
 					}
 					// Create relationship: config defines tag
-					b.createTagRelationship(graph, configNode, tagNode)
+					if err := b.createTagRelationship(graph, configNode, tagNode); err != nil {
+						return fmt.Errorf("failed to add tag relationship for %s: %w", tagNode.ID, err)
+					}
 				}
 			}
 
@@ -440,7 +546,9 @@ func (b *GraphBuilder) processTagsAndLabels(graph *RepositoryGraphImpl) error {
 						}
 					}
 					// Create relationship: config defines label
-					b.createLabelRelationship(graph, configNode, labelNode)
+					if err := b.createLabelRelationship(graph, configNode, labelNode); err != nil {
+						return fmt.Errorf("failed to add label relationship for %s: %w", labelNode.ID, err)
+					}
 				}
 			}
 		}
@@ -461,7 +569,9 @@ func (b *GraphBuilder) processTagsAndLabels(graph *RepositoryGraphImpl) error {
 						}
 					}
 					// Create relationship: repository tagged_with tag
-					b.createTagRelationship(graph, repoNode, tagNode)
+					if err := b.createTagRelationship(graph, repoNode, tagNode); err != nil {
+						return fmt.Errorf("failed to add tag relationship for %s: %w", tagNode.ID, err)
+					}
 				}
 			}
 
@@ -476,7 +586,9 @@ func (b *GraphBuilder) processTagsAndLabels(graph *RepositoryGraphImpl) error {
 						}
 					}
 					// Create relationship: repository labeled_with label
-					b.createLabelRelationship(graph, repoNode, labelNode)
+					if err := b.createLabelRelationship(graph, repoNode, labelNode); err != nil {
+						return fmt.Errorf("failed to add label relationship for %s: %w", labelNode.ID, err)
+					}
 				}
 			}
 		}
@@ -623,14 +735,10 @@ func (graph *RepositoryGraphImpl) GetGroupsForDisplay() map[string][]string {
 	return result
 }
 
-// GetMergedConfig returns a flattened configuration for legacy compatibility
+// GetMergedConfig returns a flattened configuration.
+// Callers should apply setDefaults() after this to fill in zero-value fields.
 func (graph *RepositoryGraphImpl) GetMergedConfig() *types.Config {
 	config := &types.Config{
-		Global: types.GlobalConfig{
-			BasePath: "",
-			Workers:  8,
-			Timeout:  300,
-		},
 		Repositories: make([]types.Repository, 0),
 		Groups:       make(map[string][]string),
 		Templates:    make(map[string]interface{}),
@@ -655,8 +763,17 @@ func (graph *RepositoryGraphImpl) GetMergedConfig() *types.Config {
 		config.Groups[groupName] = repos
 	}
 
-	// Merge global settings from configuration nodes (root takes precedence)
+	// Set version from root config node, default to "1.0"
+	config.Version = "1.0"
 	configNodes := graph.GetNodesByType(NodeTypeConfig)
+	for _, configNode := range configNodes {
+		if configNode.Config != nil && configNode.Config.Version != "" {
+			config.Version = configNode.Config.Version
+			break
+		}
+	}
+
+	// Merge global settings from configuration nodes (root takes precedence)
 	for _, configNode := range configNodes {
 		if configNode.Config != nil {
 			if configNode.Level == 1 { // Prefer top-level configurations
@@ -676,6 +793,32 @@ func (graph *RepositoryGraphImpl) GetMergedConfig() *types.Config {
 				}
 				for key, value := range configNode.Config.Global.Environment {
 					config.Global.Environment[key] = value
+				}
+
+				// Merge global tags
+				if config.Global.Tags == nil {
+					config.Global.Tags = make(map[string]interface{})
+				}
+				for key, value := range configNode.Config.Global.Tags {
+					config.Global.Tags[key] = value
+				}
+
+				// Merge global labels (deduplicated)
+				existing := make(map[string]bool, len(config.Global.Labels))
+				for _, l := range config.Global.Labels {
+					existing[l] = true
+				}
+				for _, l := range configNode.Config.Global.Labels {
+					if !existing[l] {
+						config.Global.Labels = append(config.Global.Labels, l)
+						existing[l] = true
+					}
+				}
+
+				// Copy credentials from root config if not already set
+				if config.Global.Credentials == nil && configNode.Config.Global.Credentials != nil {
+					creds := *configNode.Config.Global.Credentials
+					config.Global.Credentials = &creds
 				}
 			}
 

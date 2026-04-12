@@ -37,11 +37,11 @@ VERBOSE=false
 
 # Color functions
 info() {
-    echo -e "\033[36mℹ️  $1\033[0m"
+    echo -e "\033[36mℹ️  $1\033[0m" >&2
 }
 
 success() {
-    echo -e "\033[32m✅ $1\033[0m"
+    echo -e "\033[32m✅ $1\033[0m" >&2
 }
 
 error() {
@@ -49,7 +49,7 @@ error() {
 }
 
 warning() {
-    echo -e "\033[33m⚠️  $1\033[0m"
+    echo -e "\033[33m⚠️  $1\033[0m" >&2
 }
 
 # Content-based versioning function
@@ -64,7 +64,7 @@ get_content_hash() {
     # Process .go files
     while IFS= read -r -d '' file; do
         if [[ "$file" != *"/vendor/"* ]]; then
-            local relative_path="${file#$base_dir/}"
+            local relative_path="${file#"$base_dir"/}"
             local file_content
             file_content=$(cat "$file" 2>/dev/null || echo "")
             content="${content}${relative_path}:${file_content}"
@@ -349,7 +349,7 @@ for target in "${BUILD_TARGETS[@]}"; do
     # Build command arguments
     build_args=(
         "build"
-        "-ldflags" "-s -w -X main.version=$VERSION"
+        "-ldflags" "-s -w -X github.com/LederWorks/gorepos/cmd/gorepos.version=$VERSION"
         "-o" "$output_file"
     )
     
@@ -360,12 +360,19 @@ for target in "${BUILD_TARGETS[@]}"; do
     build_args+=("$MAIN_PACKAGE")
     
     # Execute build
+    if [[ "$VERBOSE" == true ]]; then
+        echo "Debug: Full command would be:"
+        echo "  go" "${build_args[*]}"
+    fi
+    
     if go "${build_args[@]}"; then
-        size=$(du -h "$output_file" | cut -f1)
+        size=$(wc -c < "$output_file" | tr -d ' ')
+        size=$(( size / 1024 ))
+        size="${size}K"
         success "Built ${os}/${arch}: $output_file ($size)"
         
         # Track built binary for listing
-        relative_path=${output_file#$OUTPUT/}
+        relative_path=${output_file#"$OUTPUT"/}
         BUILT_BINARIES+=("$relative_path")
     else
         error "Build failed for ${os}/${arch}"
@@ -378,7 +385,7 @@ echo "$VERSION" > "$OUTPUT/VERSION"
 info "Version file created: $OUTPUT/VERSION"
 
 success "Build completed successfully!"
-info "Output directory: $(realpath "$OUTPUT")"
+info "Output directory: $(cd "$OUTPUT" && pwd)"
 
 # List built binaries
 info "Built binaries:"

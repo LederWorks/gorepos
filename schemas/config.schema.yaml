@@ -16,12 +16,45 @@ properties:
 
   includes:
     type: array
+    description: "List of configuration files to include and merge. Each entry is either a plain string (local path or raw URL) or a structured object for git repository sources."
     items:
-      type: string
-      description: "Path to another configuration file to include (relative or absolute local paths, or HTTP/HTTPS URLs)"
-    description: "List of configuration files to include and merge (local paths and HTTP/HTTPS URLs are supported)"
+      oneOf:
+        - type: string
+          description: "Local file path (relative or absolute) or raw HTTP/HTTPS URL"
+        - type: object
+          description: "Structured git repository source with optional ref and file path"
+          required: ["repo"]
+          properties:
+            repo:
+              type: string
+              format: uri
+              description: "Git repository URL (GitHub, Azure DevOps, GitLab, Bitbucket)"
+              examples:
+                - "https://github.com/org/repo"
+                - "https://dev.azure.com/org/project/_git/repo"
+            ref:
+              type: string
+              description: "Branch name, tag (as refs/tags/<TAG>), or commit hash (omit for default branch)"
+              examples: ["main", "develop", "refs/tags/v1.0.0", "abc123f"]
+            file:
+              type: string
+              description: "Path to the config file within the repository"
+              default: "gorepos.yaml"
+            user:
+              type: string
+              description: "Git user.name applied to repos from this config source. Overrides global.credentials.gitUserName for repos loaded from this include. Per-repo user field still takes highest precedence."
+              examples: ["Jane Dev", "John Smith"]
+            email:
+              type: string
+              description: "Git user.email applied to repos from this config source. Overrides global.credentials.gitUserEmail for repos loaded from this include. Per-repo email field still takes highest precedence."
+              examples: ["jane@example.com", "john@company.com"]
+          additionalProperties: false
     examples:
-      - ["./configs/github.yaml", "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"]
+      - - "./configs/github.yaml"
+        - "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"
+        - repo: "https://github.com/LederWorks/gorepos-lederworks-gh"
+          ref: "main"
+        - repo: "https://dev.azure.com/org/project/_git/gorepos-config"
 
   global:
     $ref: "global.schema.yaml"

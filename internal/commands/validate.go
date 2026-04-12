@@ -63,6 +63,13 @@ func (v *ValidateCommand) Execute(configFile string, verbose bool) error {
 		fmt.Printf("Schema validation passed for all included files\n")
 		fmt.Printf("Configuration logic validation passed\n")
 	}
+
+	// Show identity warnings (non-fatal)
+	warnings := config.CollectIdentityWarnings(result.Config)
+	for _, w := range warnings {
+		fmt.Printf("  ⚠ %s\n", w)
+	}
+
 	return nil
 }
 

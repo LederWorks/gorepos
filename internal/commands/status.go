@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/LederWorks/gorepos/internal/config"
 	"github.com/LederWorks/gorepos/internal/executor"
 	"github.com/LederWorks/gorepos/internal/repository"
 	"github.com/LederWorks/gorepos/pkg/types"
@@ -34,14 +32,14 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 	s.dryRun = dryRun
 
 	// Load configuration
-	result, err := s.loadConfigWithVerbose()
+	result, err := LoadConfigWithVerbose(s.configFile, s.verbose)
 	if err != nil {
 		return err
 	}
 	cfg := result.Config
 
 	// Get operational repositories (filtered for status operations)
-	contextRepos := s.filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+	contextRepos := FilterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
 
 	// Override workers from command line if provided
 	if workers > 0 {
@@ -49,7 +47,7 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 	}
 
 	ctx := context.Background()
-	repoManager := repository.NewManager(cfg.Global.BasePath)
+	repoManager := repository.NewManagerWithCredentials(cfg.Global.BasePath, cfg.Global.Credentials)
 	exec := executor.NewPool(cfg.Global.Workers, repoManager)
 
 	fmt.Printf("GoRepos Status (workers: %d)\n", cfg.Global.Workers)
@@ -96,8 +94,10 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 		fmt.Printf("\n%s:\n", result.Repository.Name)
 
 		if !result.Success || result.StatusData == nil {
-			fmt.Printf("  Error: %v\n", result.Error)
-			errs = append(errs, result.Error)
+			if result.Error != nil {
+				fmt.Printf("  Error: %v\n", result.Error)
+				errs = append(errs, result.Error)
+			}
 			continue
 		}
 
@@ -131,60 +131,3 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 	return errors.Join(errs...)
 }
 
-// loadConfigWithVerbose loads configuration with details
-func (s *StatusCommand) loadConfigWithVerbose() (*config.ConfigLoadResult, error) {
-	loader := config.NewLoader()
-
-	if s.configFile != "" {
-		result, err := loader.LoadConfigWithDetails(s.configFile)
-		if err != nil {
-			return nil, err
-		}
-		return result, nil
-	}
-
-	// Try to find config file automatically
-	configPath, err := config.GetConfigPath()
-	if err != nil {
-		return nil, fmt.Errorf("no configuration file specified and could not find default config: %w", err)
-	}
-
-	result, err := loader.LoadConfigWithDetails(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-// filterRepositoriesByContext filters repositories based on current working directory context
-func (s *StatusCommand) filterRepositoriesByContext(repositories []types.Repository, basePath string) []types.Repository {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return repositories // Return all repositories if we can't determine context
-	}
-
-	// Normalize paths for comparison
-	normBasePath := strings.ReplaceAll(basePath, "\\", "/")
-	normCwd := strings.ReplaceAll(cwd, "\\", "/")
-
-	// Check if we're at the base path or outside of it
-	if normCwd == normBasePath || !strings.HasPrefix(normCwd, normBasePath) {
-		return repositories // Show all repositories when at base path or outside it
-	}
-
-	// Extract the relative path from base path
-	relPath := strings.TrimPrefix(normCwd, normBasePath)
-	relPath = strings.TrimPrefix(relPath, "/")
-
-	// Find repositories that are in the current context (directory or subdirectories)
-	var contextRepos []types.Repository
-	for _, repo := range repositories {
-		normRepoPath := strings.ReplaceAll(repo.Path, "\\", "/")
-		if strings.HasPrefix(normRepoPath, relPath) {
-			contextRepos = append(contextRepos, repo)
-		}
-	}
-
-	return contextRepos
-}

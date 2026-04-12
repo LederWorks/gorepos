@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/LederWorks/gorepos/internal/config"
 	"github.com/LederWorks/gorepos/pkg/types"
@@ -70,7 +72,7 @@ func (r *ReposCommand) Execute(configFile string, verbose bool) error {
 	fmt.Println(strings.Repeat("=", 40))
 
 	// Apply context-aware filtering
-	contextRepos := r.filterRepositoriesByContext(result.Config.Repositories, result.Config.Global.BasePath)
+	contextRepos := FilterRepositoriesByContext(result.Config.Repositories, result.Config.Global.BasePath)
 	if len(contextRepos) > 0 {
 		r.printRepositoryTreeSimple(contextRepos, result.Config.Global.BasePath, cwd)
 	} else {
@@ -85,45 +87,6 @@ func (r *ReposCommand) Execute(configFile string, verbose bool) error {
 	}
 
 	return nil
-}
-
-// filterRepositoriesByContext filters repositories based on current working directory context
-func (r *ReposCommand) filterRepositoriesByContext(repositories []types.Repository, basePath string) []types.Repository {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return repositories // Return all repositories if we can't determine context
-	}
-
-	// Normalize paths for comparison
-	normBasePath := strings.ReplaceAll(basePath, "\\", "/")
-	normCwd := strings.ReplaceAll(cwd, "\\", "/")
-
-	// Check if we're at the base path or outside of it
-	if normCwd == normBasePath || !strings.HasPrefix(normCwd, normBasePath) {
-		return repositories // Show all repositories when at base path or outside it
-	}
-
-	// Extract the relative path from base path
-	relPath := strings.TrimPrefix(normCwd, normBasePath)
-	relPath = strings.TrimPrefix(relPath, "/")
-	relPath = strings.TrimSuffix(relPath, "/")
-
-	if relPath == "" {
-		return repositories
-	}
-
-	// Find repositories whose configured path is under the current context directory
-	var contextRepos []types.Repository
-	for _, repo := range repositories {
-		normRepoPath := strings.ReplaceAll(repo.Path, "\\", "/")
-
-		// Include the repo if its path starts with the current relative path
-		if strings.HasPrefix(normRepoPath, relPath) {
-			contextRepos = append(contextRepos, repo)
-		}
-	}
-
-	return contextRepos
 }
 
 // printRepositoryTreeSimple displays the repository filesystem hierarchy with git status
@@ -155,7 +118,7 @@ func (r *ReposCommand) buildDirectoryTree(repos []types.Repository, basePath str
 		// Use repo.Path to derive the parent directory in the tree.
 		// repo.Path is the relative path of the repository under basePath,
 		// so its parent directory determines where the repo node is nested.
-		normPath := strings.ReplaceAll(repo.Path, "\\", "/")
+		normPath := filepath.ToSlash(repo.Path)
 		parentDir := filepath.ToSlash(filepath.Dir(normPath))
 		if parentDir == "." {
 			parentDir = ""
@@ -320,7 +283,10 @@ func (r *ReposCommand) getGitInfo(repo types.Repository) GitInfo {
 
 // getCurrentBranch gets the current git branch
 func (r *ReposCommand) getCurrentBranch(repoPath string) string {
-	cmd := exec.Command("git", "branch", "--show-current")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
 	cmd.Dir = repoPath
 	output, err := cmd.Output()
 	if err != nil {
@@ -330,7 +296,7 @@ func (r *ReposCommand) getCurrentBranch(repoPath string) string {
 	branch := strings.TrimSpace(string(output))
 	if branch == "" {
 		// Might be in detached HEAD state, try to get commit
-		cmd = exec.Command("git", "rev-parse", "--short", "HEAD")
+		cmd = exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
 		cmd.Dir = repoPath
 		if output, err := cmd.Output(); err == nil {
 			return "detached@" + strings.TrimSpace(string(output))
@@ -342,7 +308,9 @@ func (r *ReposCommand) getCurrentBranch(repoPath string) string {
 
 // getGitStatus checks git status for unstaged and staged files
 func (r *ReposCommand) getGitStatus(repoPath string) (hasUnstaged, hasStaged, isClean bool) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	cmd.Dir = repoPath
 	output, err := cmd.Output()
 	if err != nil {

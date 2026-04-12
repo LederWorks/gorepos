@@ -55,6 +55,17 @@ properties:
   credentials:
     $ref: "#/$defs/CredentialConfig"
 
+  platforms:
+    type: array
+    description: "Custom or self-hosted git platform registrations. Use this to support self-hosted GitLab, Gitea, Forgejo, or on-premise Azure DevOps instances that are not recognized by default."
+    items:
+      $ref: "#/$defs/PlatformEntry"
+    examples:
+      - - hostname: "gitlab.mycompany.com"
+          type: "gitlab"
+        - hostname: "github.internal.corp.com"
+          type: "github"
+
 additionalProperties: false
 
 $defs:
@@ -76,6 +87,32 @@ $defs:
         type: string
         description: "Environment variable containing authentication token"
         examples: ["GITHUB_TOKEN", "GITLAB_TOKEN", "AZURE_DEVOPS_TOKEN"]
+
+      gitUserName:
+        type: string
+        description: "Default git user.name set locally in each cloned repo's .git/config. Auto-detected from 'git config --global user.name' during setup. Per-repo override available via repository.user."
+        examples: ["Jane Dev", "John Smith"]
+
+      gitUserEmail:
+        type: string
+        description: "Default git user.email set locally in each cloned repo's .git/config. Auto-detected from 'git config --global user.email' during setup. Per-repo override available via repository.email."
+        examples: ["jane@example.com", "john@company.com"]
+
+    additionalProperties: false
+
+  PlatformEntry:
+    type: object
+    description: "Registration of a custom or self-hosted git hosting platform"
+    required: [hostname, type]
+    properties:
+      hostname:
+        type: string
+        description: "Hostname to match (case-insensitive) against include repo URLs"
+        examples: ["gitlab.mycompany.com", "git.internal.corp"]
+      type:
+        type: string
+        enum: [github, gitlab, azure, bitbucket]
+        description: "Platform type that controls how raw content URLs are constructed"
     additionalProperties: false
 
 examples:

@@ -14,13 +14,22 @@ import (
 
 // Manager implements the RepositoryManager interface
 type Manager struct {
-	basePath string
+	basePath    string
+	credentials *types.CredentialConfig // may be nil
 }
 
 // NewManager creates a new repository manager
 func NewManager(basePath string) *Manager {
 	return &Manager{
 		basePath: basePath,
+	}
+}
+
+// NewManagerWithCredentials creates a repository manager that sets per-repo git identity after clone.
+func NewManagerWithCredentials(basePath string, creds *types.CredentialConfig) *Manager {
+	return &Manager{
+		basePath:    basePath,
+		credentials: creds,
 	}
 }
 
@@ -51,7 +60,35 @@ func (m *Manager) Clone(ctx context.Context, repo *types.Repository) error {
 		return fmt.Errorf("git clone failed: %w\nOutput: %s", err, string(output))
 	}
 
+	// Set local git identity (never touches --global config)
+	if user := m.effectiveUser(repo); user != "" {
+		exec.Command("git", "-C", repoPath, "config", "user.name", user).Run()
+	}
+	if email := m.effectiveEmail(repo); email != "" {
+		exec.Command("git", "-C", repoPath, "config", "user.email", email).Run()
+	}
+
 	return nil
+}
+
+func (m *Manager) effectiveUser(repo *types.Repository) string {
+	if repo.User != "" {
+		return repo.User
+	}
+	if m.credentials != nil {
+		return m.credentials.GitUserName
+	}
+	return ""
+}
+
+func (m *Manager) effectiveEmail(repo *types.Repository) string {
+	if repo.Email != "" {
+		return repo.Email
+	}
+	if m.credentials != nil {
+		return m.credentials.GitUserEmail
+	}
+	return ""
 }
 
 // Update updates an existing repository
@@ -137,10 +174,9 @@ func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.Re
 		lines := strings.Split(statusOutput, "\n")
 		for _, line := range lines {
 			if line != "" {
-				// Extract filename from git status output
-				parts := strings.SplitN(line, " ", 3)
-				if len(parts) >= 3 {
-					status.UncommittedFiles = append(status.UncommittedFiles, strings.TrimSpace(parts[2]))
+				// Extract filename from git status --porcelain output (XY FILENAME from column 3)
+				if len(line) >= 3 {
+					status.UncommittedFiles = append(status.UncommittedFiles, line[3:])
 				}
 			}
 		}
@@ -215,17 +251,8 @@ func (m *Manager) Exists(repo *types.Repository) bool {
 	repoPath := m.getRepoPath(repo)
 	gitDir := filepath.Join(repoPath, ".git")
 
-	// Check if it's a git repository
-	if stat, err := os.Stat(gitDir); err == nil {
-		return stat.IsDir()
-	}
-
-	// Check if it's a git worktree
-	if _, err := os.Stat(gitDir); err == nil {
-		return true
-	}
-
-	return false
+	_, err := os.Stat(gitDir)
+	return err == nil
 }
 
 // getRepoPath returns the absolute path for a repository

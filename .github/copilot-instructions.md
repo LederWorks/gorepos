@@ -82,13 +82,13 @@ Nodes are classified as **explicit** (from YAML) or **derived** (computed, e.g. 
 | `graph` | No filtering — always full graph |
 | `groups`, `repos` | Context-aware |
 
-### Config loading vs. graph loading
+### Config loading paths
 
-There are two loading paths:
-- `LoadConfigWithDetails` (legacy flat merge, used by most commands) — returns `ConfigLoadResult` with `FileNode` hierarchy for display.
-- `LoadConfigWithGraph` (graph-based, used internally) — builds full graph, then calls `GetMergedConfig()`.
+Two paths exist and are both in active use:
+- `loader.LoadConfig(path)` (graph path) — used by `update` and `clone` via `loadConfig()` in `main.go`. Builds full graph, applies `setDefaults`, validates. Returns flat `*types.Config`. Handles private remote `repo:` includes via `git clone --sparse`.
+- `loader.LoadConfigWithDetails(path)` (flat merge path) — used by `status`, `validate`, `graph`, `groups`, `repos` via `LoadConfigWithVerbose`. Returns `ConfigLoadResult` with `FileNode` hierarchy and `ProcessedFiles` needed by display renderers.
 
-New features involving relationship queries should use the graph path.
+Both paths now agree on defaults. Commands needing `FileHierarchy` for display must use `LoadConfigWithDetails`.
 
 ### Two config APIs, one public surface
 
