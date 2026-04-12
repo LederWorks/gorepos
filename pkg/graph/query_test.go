@@ -163,7 +163,7 @@ func TestRemoveNode_CleansRelationships(t *testing.T) {
 func TestRemoveNode_CleansTypeIndex(t *testing.T) {
 	g := newTestGraph()
 	addNode(t, g, "r1", NodeTypeRepository, "repo1")
-	g.RemoveNode("r1")
+	_ = g.RemoveNode("r1")
 	repos := g.GetNodesByType(NodeTypeRepository)
 	if len(repos) != 0 {
 		t.Errorf("expected 0 repo nodes after removal, got %d", len(repos))
@@ -173,7 +173,7 @@ func TestRemoveNode_CleansTypeIndex(t *testing.T) {
 func TestRemoveNode_CleansRepoCache(t *testing.T) {
 	g := newTestGraph()
 	addNode(t, g, "r1", NodeTypeRepository, "myrepo")
-	g.RemoveNode("r1")
+	_ = g.RemoveNode("r1")
 	if g.AllRepositories["myrepo"] != nil {
 		t.Error("AllRepositories cache should be cleared after node removal")
 	}
@@ -185,7 +185,7 @@ func TestRemoveNode_RemovesFromParentChildren(t *testing.T) {
 	child := addNode(t, g, "child", NodeTypeRepository, "r1")
 	parent.AddChild(child)
 
-	g.RemoveNode("child")
+	_ = g.RemoveNode("child")
 	if len(parent.Children) != 0 {
 		t.Errorf("expected parent to have 0 children after removal, got %d", len(parent.Children))
 	}
@@ -219,7 +219,7 @@ func TestRemoveRelationship_CleansIndexes(t *testing.T) {
 	from := addNode(t, g, "from", NodeTypeConfig, "c")
 	to := addNode(t, g, "to", NodeTypeRepository, "r")
 	addRel(t, g, "rel1", from, to, RelationDefines)
-	g.RemoveRelationship("rel1")
+	_ = g.RemoveRelationship("rel1")
 
 	if len(g.GetRelationshipsByType(RelationDefines)) != 0 {
 		t.Error("type index should be empty after removal")
@@ -279,10 +279,10 @@ func TestGetNode_ExistsAndMissing(t *testing.T) {
 func TestGetNodesByLevel(t *testing.T) {
 	g := newTestGraph()
 	root := NewGraphNode("root", NodeTypeRoot, "root")
-	g.AddNode(root)
+	_ = g.AddNode(root)
 	child := NewGraphNode("child", NodeTypeConfig, "cfg")
 	root.AddChild(child)
-	g.AddNode(child)
+	_ = g.AddNode(child)
 
 	l0 := g.GetNodesByLevel(0)
 	l1 := g.GetNodesByLevel(1)

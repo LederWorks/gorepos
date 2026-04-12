@@ -364,7 +364,7 @@ func (g *RepositoryGraphImpl) RemoveNode(id string) error {
 		}
 	}
 	for _, relID := range toRemove {
-		g.RemoveRelationship(relID)
+		_ = g.RemoveRelationship(relID)
 	}
 
 	// Remove from all indexes

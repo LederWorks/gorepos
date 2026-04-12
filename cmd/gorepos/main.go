@@ -17,9 +17,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is embedded at build time via -ldflags "-X main.version=..."
-var version string
-
 var (
 	cfgFile string
 	workers int
@@ -158,7 +155,7 @@ func main() {
 
 // loadConfig loads the configuration file using the graph-based path.
 // Commands that need the FileHierarchy for display (validate, graph, groups)
-// use loadConfigWithVerbose directly.
+// use commands.LoadConfigWithVerbose directly.
 func loadConfig() (*types.Config, error) {
 	configPath := cfgFile
 	if configPath == "" {
@@ -176,11 +173,6 @@ func loadConfig() (*types.Config, error) {
 
 	loader := config.NewLoader()
 	return loader.LoadConfig(configPath)
-}
-
-// loadConfigWithVerbose loads configuration and optionally shows hierarchy
-func loadConfigWithVerbose() (*config.ConfigLoadResult, error) {
-	return commands.LoadConfigWithVerbose(cfgFile, verbose)
 }
 
 // filterRepositoriesByContext delegates to the shared helper in the commands package.

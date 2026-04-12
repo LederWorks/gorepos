@@ -62,10 +62,10 @@ func (m *Manager) Clone(ctx context.Context, repo *types.Repository) error {
 
 	// Set local git identity (never touches --global config)
 	if user := m.effectiveUser(repo); user != "" {
-		exec.Command("git", "-C", repoPath, "config", "user.name", user).Run()
+		_ = exec.Command("git", "-C", repoPath, "config", "user.name", user).Run()
 	}
 	if email := m.effectiveEmail(repo); email != "" {
-		exec.Command("git", "-C", repoPath, "config", "user.email", email).Run()
+		_ = exec.Command("git", "-C", repoPath, "config", "user.email", email).Run()
 	}
 
 	return nil
@@ -198,8 +198,8 @@ func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.Re
 		if len(parts) == 2 {
 			ahead := 0
 			behind := 0
-			fmt.Sscanf(parts[0], "%d", &ahead)
-			fmt.Sscanf(parts[1], "%d", &behind)
+			_, _ = fmt.Sscanf(parts[0], "%d", &ahead)
+			_, _ = fmt.Sscanf(parts[1], "%d", &behind)
 
 			status.AheadBehind = &types.BranchComparison{
 				Ahead:  ahead,

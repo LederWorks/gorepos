@@ -24,7 +24,7 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = old
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	_, _ = io.Copy(&buf, r)
 	r.Close()
 	return buf.String()
 }

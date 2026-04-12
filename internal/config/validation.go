@@ -101,13 +101,7 @@ func (l *Loader) ValidateConfig(config *types.Config) error {
 	return nil
 }
 
-// validateConfigStruct validates configuration using struct validation tags
-func (l *Loader) validateConfigStruct(config *types.Config) error {
-	if err := l.validator.Struct(config); err != nil {
-		return fmt.Errorf("configuration structure validation failed: %w", err)
-	}
-	return nil
-}
+
 
 // validatePartialConfig applies relaxed validation rules suitable for include files
 func (l *Loader) validatePartialConfig(config *types.Config) error {

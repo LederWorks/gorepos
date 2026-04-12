@@ -56,7 +56,7 @@ repositories:
 
 	// Change to a subdir that doesn't match any repo path
 	subDir := dir + "/unrelated"
-	os.MkdirAll(subDir, 0755)
+	_ = os.MkdirAll(subDir, 0755)
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)
 	os.Chdir(subDir)

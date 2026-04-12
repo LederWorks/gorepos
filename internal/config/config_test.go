@@ -561,8 +561,8 @@ repositories:
     url: https://github.com/example/r2.git
 `
 
-	os.WriteFile(aPath, []byte(aContent), 0644)
-	os.WriteFile(bPath, []byte(bContent), 0644)
+	_ = os.WriteFile(aPath, []byte(aContent), 0644)
+	_ = os.WriteFile(bPath, []byte(bContent), 0644)
 
 	l := newLoader()
 	_, err := l.LoadConfigWithDetails(aPath)
@@ -586,10 +586,10 @@ func TestLoadRemoteConfig_EmptyURL(t *testing.T) {
 func TestGetConfigPath_NotFound(t *testing.T) {
 	// Change to a temp directory where no config files exist
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	dir := t.TempDir()
-	os.Chdir(dir)
+	_ = os.Chdir(dir)
 
 	_, err := GetConfigPath()
 	if err == nil {
@@ -599,13 +599,13 @@ func TestGetConfigPath_NotFound(t *testing.T) {
 
 func TestGetConfigPath_FoundInCurrentDir(t *testing.T) {
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	dir := t.TempDir()
-	os.Chdir(dir)
+	_ = os.Chdir(dir)
 
 	// Create a config file
-	os.WriteFile(filepath.Join(dir, "gorepos.yaml"), []byte(""), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "gorepos.yaml"), []byte(""), 0644)
 
 	path, err := GetConfigPath()
 	if err != nil {

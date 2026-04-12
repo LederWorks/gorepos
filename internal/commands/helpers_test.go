@@ -53,7 +53,7 @@ func TestFilterRepositoriesByContext_OutsideBasePath_ReturnsAll(t *testing.T) {
 func TestFilterRepositoriesByContext_InSubdir_FiltersToSubtree(t *testing.T) {
 	basePath := t.TempDir()
 	subDir := filepath.Join(basePath, "org")
-	os.MkdirAll(subDir, 0755)
+	_ = os.MkdirAll(subDir, 0755)
 
 	repos := []types.Repository{
 		makeTestRepo("a", "org/a"),

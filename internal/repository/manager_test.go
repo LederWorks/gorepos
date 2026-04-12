@@ -10,20 +10,6 @@ import (
 	"github.com/LederWorks/gorepos/pkg/types"
 )
 
-// initBareRepo creates a bare git repository at the given path and returns its path.
-func initBareRepo(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	bare := filepath.Join(dir, "bare.git")
-
-	if err := os.MkdirAll(bare, 0755); err != nil {
-		t.Fatalf("mkdir bare: %v", err)
-	}
-
-	run(t, bare, "git", "init", "--bare")
-	return bare
-}
-
 // initLocalRepo creates a local git repo with an initial commit and returns its path.
 func initLocalRepo(t *testing.T) string {
 	t.Helper()
