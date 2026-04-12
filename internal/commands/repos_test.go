@@ -12,7 +12,7 @@ func TestReposCommand_ValidConfig_NoError(t *testing.T) {
 	path := writeCommandYAML(t, dir, "gorepos.yaml", validCommandConfig)
 
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	cmd := NewReposCommand()
 	if err := cmd.Execute(path, false); err != nil {
@@ -32,7 +32,7 @@ func TestReposCommand_VerboseMode_NoError(t *testing.T) {
 	path := writeCommandYAML(t, dir, "gorepos.yaml", validCommandConfig)
 
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	cmd := NewReposCommand()
 	if err := cmd.Execute(path, true); err != nil {
@@ -58,8 +58,8 @@ repositories:
 	subDir := dir + "/unrelated"
 	_ = os.MkdirAll(subDir, 0755)
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(subDir)
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(subDir)
 
 	cmd := NewReposCommand()
 	if err := cmd.Execute(path, false); err != nil {

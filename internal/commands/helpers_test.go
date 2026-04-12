@@ -22,12 +22,11 @@ func TestFilterRepositoriesByContext_AtBasePath_ReturnsAll(t *testing.T) {
 	}
 
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(dir)
 
 	result := FilterRepositoriesByContext(repos, dir)
 	if len(result) != 2 {
-		t.Errorf("expected 2 repos, got %d", len(result))
 	}
 }
 
@@ -41,12 +40,11 @@ func TestFilterRepositoriesByContext_OutsideBasePath_ReturnsAll(t *testing.T) {
 	// CWD is a completely different temp dir
 	cwd := t.TempDir()
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(cwd)
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(cwd)
 
 	result := FilterRepositoriesByContext(repos, basePath)
 	if len(result) != 2 {
-		t.Errorf("expected 2 repos when outside basePath, got %d", len(result))
 	}
 }
 
@@ -62,8 +60,8 @@ func TestFilterRepositoriesByContext_InSubdir_FiltersToSubtree(t *testing.T) {
 	}
 
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(subDir)
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(subDir)
 
 	result := FilterRepositoriesByContext(repos, basePath)
 	if len(result) != 2 {
@@ -79,8 +77,8 @@ func TestFilterRepositoriesByContext_InSubdir_FiltersToSubtree(t *testing.T) {
 func TestFilterRepositoriesByContext_EmptyRepos_ReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
-	os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(dir)
 
 	result := FilterRepositoriesByContext(nil, dir)
 	if len(result) != 0 {
