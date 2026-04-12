@@ -305,7 +305,7 @@ func (l *Loader) LoadRemoteConfig(url string) (*types.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch remote config from %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch remote config from %s: HTTP %d", url, resp.StatusCode)
@@ -342,7 +342,7 @@ func (l *Loader) LoadRemoteConfigViaGit(repoURL, ref, filePath string) (*types.C
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	isCommitHash := looksLikeCommitHash(ref)
 
@@ -412,7 +412,7 @@ func looksLikeCommitHash(ref string) bool {
 		return false
 	}
 	for _, c := range ref {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
 		}
 	}

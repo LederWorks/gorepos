@@ -761,13 +761,13 @@ func checkNeedsFilePath(repoURL, ref string) bool {
 		fmt.Println("  ℹ Could not verify gorepos.yaml at repo root (network error)")
 		return true
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	switch {
-	case resp.StatusCode == http.StatusOK:
+	switch resp.StatusCode {
+	case http.StatusOK:
 		fmt.Println("  ✓ Found gorepos.yaml at repo root")
 		return false
-	case resp.StatusCode == http.StatusNotFound:
+	case http.StatusNotFound:
 		fmt.Println("  ℹ No gorepos.yaml found at repo root")
 		return true
 	default:

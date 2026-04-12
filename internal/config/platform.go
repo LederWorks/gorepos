@@ -124,7 +124,7 @@ func resolveAzureDevOps(u *url.URL, ref, filePath string) (string, error) {
 		}
 	}
 	if gitIdx < 0 || gitIdx < 2 || gitIdx+1 >= len(parts) {
-		return "", fmt.Errorf("Azure DevOps URL must match /{org}/{project}/_git/{repo}: %s", u.String())
+		return "", fmt.Errorf("azure DevOps URL must match /{org}/{project}/_git/{repo}: %s", u.String())
 	}
 
 	org := parts[0]
@@ -174,7 +174,7 @@ func resolveGitLab(u *url.URL, ref, filePath string) (string, error) {
 func resolveBitbucket(u *url.URL, ref, filePath string) (string, error) {
 	parts := cleanPathSegments(u.Path)
 	if len(parts) < 2 {
-		return "", fmt.Errorf("Bitbucket URL must have at least owner/repo: %s", u.String())
+		return "", fmt.Errorf("bitbucket URL must have at least owner/repo: %s", u.String())
 	}
 
 	owner := parts[0]

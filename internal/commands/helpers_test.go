@@ -27,6 +27,7 @@ func TestFilterRepositoriesByContext_AtBasePath_ReturnsAll(t *testing.T) {
 
 	result := FilterRepositoriesByContext(repos, dir)
 	if len(result) != 2 {
+		t.Errorf("expected 2 repos, got %d", len(result))
 	}
 }
 
@@ -45,6 +46,7 @@ func TestFilterRepositoriesByContext_OutsideBasePath_ReturnsAll(t *testing.T) {
 
 	result := FilterRepositoriesByContext(repos, basePath)
 	if len(result) != 2 {
+		t.Errorf("expected 2 repos when outside basePath, got %d", len(result))
 	}
 }
 
