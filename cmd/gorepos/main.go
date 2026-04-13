@@ -40,8 +40,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "gorepos",
-	Short: "A modern, high-performance repository management tool",
+	Use:     "gorepos",
+	Version: version,
+	Short:   "A modern, high-performance repository management tool",
 	Long: `GoRepos is a modern repository management tool that provides:
 - Parallel repository operations for superior performance
 - YAML-based configuration with external config feeding
