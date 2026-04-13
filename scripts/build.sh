@@ -361,8 +361,8 @@ for target in "${BUILD_TARGETS[@]}"; do
     
     # Execute build
     if [[ "$VERBOSE" == true ]]; then
-        echo "Debug: Full command would be:"
-        echo "  go" "${build_args[*]}"
+        echo "Debug: Full command would be:" >&2
+        echo "  go" "${build_args[*]}" >&2
     fi
     
     if go "${build_args[@]}"; then
@@ -390,7 +390,7 @@ info "Output directory: $(cd "$OUTPUT" && pwd)"
 # List built binaries
 info "Built binaries:"
 for binary in "${BUILT_BINARIES[@]}"; do
-    echo "  - $binary"
+    echo "  - $binary" >&2
 done
 
 # Cleanup environment variables

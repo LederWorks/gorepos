@@ -243,8 +243,11 @@ func TestResolveRawContentURL_CustomGitHubEnterprisePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(got, "raw.githubusercontent.com") {
-		t.Errorf("expected GitHub-style raw URL, got: %s", got)
+	// GHES serves raw content at https://{host}/{owner}/{repo}/raw/{ref}/{file}
+	// (not raw.githubusercontent.com, which is only for public github.com)
+	expected := "https://github.internal.corp/org/repo/raw/main/gorepos.yaml"
+	if got != expected {
+		t.Errorf("expected GHES raw URL %q, got: %s", expected, got)
 	}
 }
 

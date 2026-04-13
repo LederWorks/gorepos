@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/LederWorks/gorepos/pkg/types"
 )
 
 // --- helpers ---
@@ -354,4 +356,94 @@ repositories:
 			break
 		}
 	}
+}
+
+// TestBuildGraph_CycleDetection_DifferentUsers verifies that two remote includes
+// pointing to the same repo+ref+file but with different user= values are still
+// treated as the same resource for cycle-detection purposes (regression test for C-2).
+// A → B (user:alice) → A (user:bob) must be detected as a cycle, not cause a stack overflow.
+func TestBuildGraph_CycleDetection_DifferentUsers(t *testing.T) {
+	// Simulate: config A includes config B with user=alice; config B includes config A with user=bob.
+	// We inject both as fake "remote" configs via the repoLoader hook so that we don't
+	// need actual git repos.
+
+	const (
+		repoA = "https://github.com/example/config-a.git"
+		repoB = "https://github.com/example/config-b.git"
+		ref   = "main"
+		file  = "gorepos.yaml"
+	)
+
+	configA := &types.Config{
+		Version: "1.0",
+		Global: types.GlobalConfig{
+			BasePath: "/tmp/repos",
+			Workers:  2,
+			Timeout:  5 * time.Second,
+		},
+		Repositories: []types.Repository{
+			{Name: "repo-a", Path: "repo-a", URL: "https://github.com/example/repo-a.git"},
+		},
+		Includes: []types.IncludeEntry{
+			{Repo: repoB, Ref: ref, File: file, User: "alice"},
+		},
+	}
+
+	configB := &types.Config{
+		Version: "1.0",
+		Global: types.GlobalConfig{
+			BasePath: "/tmp/repos",
+			Workers:  2,
+			Timeout:  5 * time.Second,
+		},
+		Repositories: []types.Repository{
+			{Name: "repo-b", Path: "repo-b", URL: "https://github.com/example/repo-b.git"},
+		},
+		// B includes A back — different user= value; must still be detected as a cycle.
+		Includes: []types.IncludeEntry{
+			{Repo: repoA, Ref: ref, File: file, User: "bob"},
+		},
+	}
+
+	repoLoader := func(repoURL, r, f string) (*types.Config, error) {
+		switch repoURL {
+		case repoA:
+			return configA, nil
+		case repoB:
+			return configB, nil
+		default:
+			t.Errorf("unexpected repo loader call for %s", repoURL)
+			return nil, nil
+		}
+	}
+
+	// Build a local root config that pulls in config A as its first remote include.
+	dir := t.TempDir()
+	rootYAML := `version: "1.0"
+global:
+  basePath: /tmp/repos
+  workers: 2
+  timeout: 5s
+repositories:
+  - name: root-repo
+    path: root-repo
+    url: https://github.com/example/root-repo.git
+includes:
+  - repo: ` + repoA + `
+    ref: ` + ref + `
+    file: ` + file + `
+    user: root
+`
+	rootPath := filepath.Join(dir, "gorepos.yaml")
+	if err := os.WriteFile(rootPath, []byte(rootYAML), 0o644); err != nil {
+		t.Fatalf("write root yaml: %v", err)
+	}
+
+	builder := NewGraphBuilderWithLoaders(repoLoader, nil)
+	_, err := builder.BuildGraph(rootPath)
+	if err == nil {
+		t.Fatal("expected cycle-detection error, got nil — possible stack overflow or missed cycle")
+	}
+	// The error message should mention circular dependency.
+	t.Logf("got expected cycle error: %v", err)
 }

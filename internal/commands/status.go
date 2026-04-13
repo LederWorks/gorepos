@@ -69,7 +69,6 @@ func (s *StatusCommand) Execute(configFile string, verbose bool, workers int, dr
 		operations = append(operations, types.Operation{
 			Repository: repo,
 			Command:    "status",
-			Context:    ctx,
 		})
 	}
 

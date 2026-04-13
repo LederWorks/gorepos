@@ -884,10 +884,12 @@ func createUserConfigTemplate(basePath string, workers int, timeout time.Duratio
 		includesSection = "# includes:\n#   - \"./another-config.yaml\"\n#   - repo: \"https://github.com/org/repo\"\n#     ref: \"main\"\n"
 	}
 
-	// Build credentials section — include git identity if detected
+	// Build credentials section — include git identity if detected.
+	// Note: sshKeyPath, gitCredHelper, tokenEnvVar are not generated here
+	// because they are not yet implemented at runtime (H-4/SEC-M3).
 	var credentialsSection string
 	if gitUser != "" || gitEmail != "" {
-		credentialsSection = "  credentials:\n    sshKeyPath: \"\"\n    gitCredHelper: \"\"\n"
+		credentialsSection = "  credentials:\n"
 		if gitUser != "" {
 			credentialsSection += fmt.Sprintf("    gitUserName: %q\n", gitUser)
 		}
@@ -895,7 +897,7 @@ func createUserConfigTemplate(basePath string, workers int, timeout time.Duratio
 			credentialsSection += fmt.Sprintf("    gitUserEmail: %q\n", gitEmail)
 		}
 	} else {
-		credentialsSection = "  credentials:\n    sshKeyPath: \"\"\n    gitCredHelper: \"\"\n"
+		credentialsSection = "  # credentials:\n  #   gitUserName: \"\"\n  #   gitUserEmail: \"\"\n"
 	}
 
 	return fmt.Sprintf(`# GoRepos User Configuration

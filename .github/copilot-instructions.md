@@ -86,7 +86,7 @@ Nodes are classified as **explicit** (from YAML) or **derived** (computed, e.g. 
 
 Two paths exist and are both in active use:
 - `loader.LoadConfig(path)` (graph path) — used by `update` and `clone` via `loadConfig()` in `main.go`. Builds full graph, applies `setDefaults`, validates. Returns flat `*types.Config`. Handles private remote `repo:` includes via `git clone --sparse`.
-- `loader.LoadConfigWithDetails(path)` (flat merge path) — used by `status`, `validate`, `graph`, `groups`, `repos` via `LoadConfigWithVerbose`. Returns `ConfigLoadResult` with `FileNode` hierarchy and `ProcessedFiles` needed by display renderers.
+- `loader.LoadConfigWithDetails(path)` (flat merge path) — used by `status`, `validate`, `graph`, `groups`, `repos` via `commands.LoadConfigWithVerbose(cfgFile, verbose)`. Returns `ConfigLoadResult` with `FileNode` hierarchy and `ProcessedFiles` needed by display renderers.
 
 Both paths now agree on defaults. Commands needing `FileHierarchy` for display must use `LoadConfigWithDetails`.
 
@@ -103,7 +103,7 @@ Both are inherited: global → config-level → repository-level. Repository-lev
 
 ### Version embedding
 
-`version` in `package main` is injected by `-ldflags "-X main.version=<ver>"`. Never hardcode it. The build scripts handle detection automatically (git tag → commit+timestamp → `dev-<date>`). Use `--content-hash` during local development to avoid needing git commits.
+Version is injected at link time by `-ldflags "-X main.version=<ver>"`. Never hardcode it. The build scripts handle detection automatically (git tag → commit+timestamp → `dev-<date>`). Use `--content-hash` during local development to avoid needing git commits. Note: `var version string` is not declared in source; the ldflags injection is handled entirely by the build scripts.
 
 ### Display package conventions
 
@@ -120,3 +120,24 @@ Each display module in `internal/display/` has a single responsibility and expos
 - `github.com/go-playground/validator/v10` — struct-tag validation on config types
 
 Go 1.24+ required (see `go.mod`).
+
+## Tools & CI
+
+### CI Workflow
+
+- **Lint**: `golangci-lint-action@v9` — uses golangci-lint **v2**, which enables both `errcheck` and `staticcheck` by default
+- **Build matrix**: only runs after `test` and `lint` succeed (`needs: [test, lint]`)
+- **Actions versions**: `checkout@v6`, `setup-go@v6`, `golangci-lint-action@v9` (Node.js 24 compatible)
+
+### Lint Conventions (golangci-lint v2)
+
+| Rule | Pattern |
+|------|---------|
+| `errcheck` — unchecked inline return | `_ = f.Close()` |
+| `errcheck` — unchecked deferred return | `defer func() { _ = f.Close() }()` — **not** `defer f.Close()` |
+| `errcheck` — multi-return | `_, _ = fmt.Sscanf(...)` |
+| `ST1005` (staticcheck) — error string casing | Error strings must be lowercase: `"azure devops..."` not `"Azure DevOps..."` |
+| `SA9003` (staticcheck) — empty branch | Never leave `if` / `else` bodies empty |
+| `QF1001` (staticcheck) — De Morgan's law | Apply automatically when flagged |
+| `QF1002` (staticcheck) — tagged switch | Use `switch x { case val: }` not `switch { case x == val: }` |
+| `unused` | No unexported functions or variables that are never called |

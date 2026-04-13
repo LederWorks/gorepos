@@ -25,9 +25,20 @@ func NewPool(workerCount int, manager types.RepositoryManager) *Pool {
 	}
 }
 
-// Execute processes operations in parallel using the worker pool
+// Execute processes operations in parallel using the worker pool.
+// It is safe to call Stop concurrently, but Execute itself must not be called
+// concurrently — if a previous Execute is still in progress, this call returns
+// a closed channel immediately. Create a new Pool for concurrent execution.
 func (p *Pool) Execute(ctx context.Context, operations []types.Operation) <-chan types.Result {
 	p.mu.Lock()
+	if p.cancel != nil {
+		// A previous Execute is still running. Return a closed channel so callers
+		// drain immediately rather than blocking forever.
+		p.mu.Unlock()
+		ch := make(chan types.Result)
+		close(ch)
+		return ch
+	}
 	workerCount := p.workerCount
 	execCtx, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
@@ -37,6 +48,12 @@ func (p *Pool) Execute(ctx context.Context, operations []types.Operation) <-chan
 
 	go func() {
 		defer close(results)
+		defer func() {
+			// Clear p.cancel once the goroutine finishes so Execute can be reused.
+			p.mu.Lock()
+			p.cancel = nil
+			p.mu.Unlock()
+		}()
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -80,11 +97,11 @@ func (p *Pool) worker(ctx context.Context, id int, jobs <-chan types.Operation, 
 
 			result := p.executeOperation(ctx, &job)
 
-			select {
-			case results <- *result:
-			case <-ctx.Done():
-				return
-			}
+			// The results channel is buffered to len(operations), so this send
+			// never blocks — there is always a slot available. We do NOT select
+			// on ctx.Done() here because that would silently drop a completed
+			// result and cause callers to miss errors from finished work.
+			results <- *result
 
 		case <-ctx.Done():
 			return

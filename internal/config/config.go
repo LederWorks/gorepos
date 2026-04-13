@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/LederWorks/gorepos/pkg/graph"
@@ -37,7 +38,12 @@ func ValidateConfig(config *types.Config) error {
 func LoadConfigWithGraph(path string) (*types.Config, error) {
 	// Build repository graph with remote loaders injected to avoid circular imports
 	loader := NewLoader()
-	builder := graph.NewGraphBuilderWithLoaders(loader.LoadRemoteConfigViaGit, loader.LoadRemoteConfig)
+	builder := graph.NewGraphBuilderWithLoaders(
+		func(repoURL, ref, file string) (*types.Config, error) {
+			return loader.LoadRemoteConfigViaGit(context.Background(), repoURL, ref, file)
+		},
+		loader.LoadRemoteConfig,
+	)
 	graphQuery, err := builder.BuildGraph(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build repository graph: %w", err)

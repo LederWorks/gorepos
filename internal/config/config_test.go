@@ -807,13 +807,17 @@ func TestLooksLikeCommitHash(t *testing.T) {
 		ref    string
 		expect bool
 	}{
-		{"abc123f", true},
+		// Short hashes must return false — platforms cannot fetch commits by abbreviated SHA.
+		{"abc123f", false},
+		{"ABCDEF1", false},
+		{"abc12", false}, // too short
+		// Exactly 40 hex chars is the only accepted format.
 		{"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", true},
+		{"A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2", true}, // uppercase hex
+		// Non-hex and ref-like strings must return false.
 		{"main", false},
 		{"v1.0.0", false},
 		{"refs/tags/v1.0.0", false},
-		{"abc12", false},  // too short
-		{"ABCDEF1", true}, // uppercase hex
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -960,5 +964,39 @@ repositories:
 	}
 	if !found {
 		t.Error("expected sub-repo from directory include to be merged into config")
+	}
+}
+
+// TestLoadConfigWithDetails_NoWorkersOrTimeout verifies that a config omitting the
+// optional workers and timeout fields succeeds via LoadConfigWithDetails.
+// Regression test for C-1: setDefaults must run BEFORE ValidateConfig so that the
+// validator sees populated values rather than zero values.
+func TestLoadConfigWithDetails_NoWorkersOrTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// Intentionally omit global.workers and global.timeout — they are optional.
+	content := `version: "1.0"
+global:
+  basePath: /tmp/repos
+repositories:
+  - name: myrepo
+    path: myrepo
+    url: https://github.com/example/myrepo.git
+`
+	p := writeYAML(t, dir, "gorepos.yaml", content)
+
+	l := newLoader()
+	result, err := l.LoadConfigWithDetails(p)
+	if err != nil {
+		t.Fatalf("expected success when workers/timeout are omitted, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	// setDefaults should have filled in Workers >= 1 and Timeout >= 1s.
+	if result.Config.Global.Workers < 1 {
+		t.Errorf("expected Workers >= 1 after defaults, got %d", result.Config.Global.Workers)
+	}
+	if result.Config.Global.Timeout < 1 {
+		t.Errorf("expected Timeout >= 1ns after defaults, got %v", result.Config.Global.Timeout)
 	}
 }

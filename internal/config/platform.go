@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/LederWorks/gorepos/pkg/types"
@@ -89,8 +90,15 @@ func resolveByType(platformType string, u *url.URL, ref, filePath string) (strin
 }
 
 // resolveGitHub converts a GitHub repo URL to a raw content URL.
-// Input:  https://github.com/{owner}/{repo}
-// Output: https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{file}
+// For github.com:
+//
+//	Input:  https://github.com/{owner}/{repo}
+//	Output: https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{file}
+//
+// For GitHub Enterprise Server (GHES):
+//
+//	Input:  https://{ghes-host}/{owner}/{repo}
+//	Output: https://{ghes-host}/{owner}/{repo}/raw/{ref}/{file}
 func resolveGitHub(u *url.URL, ref, filePath string) (string, error) {
 	// Path: /{owner}/{repo} (possibly with .git suffix or trailing slash)
 	parts := cleanPathSegments(u.Path)
@@ -105,8 +113,36 @@ func resolveGitHub(u *url.URL, ref, filePath string) (string, error) {
 		ref = "HEAD"
 	}
 
-	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s",
-		owner, repo, ref, filePath), nil
+	hostname := u.Hostname()
+	if hostname == "github.com" {
+		// Public GitHub: raw content is served from a dedicated CDN host
+		return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s",
+			owner, repo, ref, filePath), nil
+	}
+
+	// GitHub Enterprise Server: raw content is served from the instance host itself
+	return fmt.Sprintf("https://%s/%s/%s/raw/%s/%s",
+		hostname, owner, repo, ref, filePath), nil
+}
+
+// resolveAzureVersionType returns the correct versionDescriptor.versionType value for the
+// Azure DevOps Items API based on the ref string.
+//
+//   - A full 40-hex character string → "commit"
+//   - A ref prefixed with "refs/tags/" or a semver-style "v" prefix → "tag"
+//   - Anything else → "branch"
+func resolveAzureVersionType(ref string) string {
+	// Full 40-character hex commit SHA
+	if len(ref) == 40 {
+		if matched, _ := regexp.MatchString(`^[0-9a-fA-F]{40}$`, ref); matched {
+			return "commit"
+		}
+	}
+	// Common tag prefixes
+	if strings.HasPrefix(ref, "refs/tags/") || strings.HasPrefix(ref, "v") {
+		return "tag"
+	}
+	return "branch"
 }
 
 // resolveAzureDevOps converts an Azure DevOps repo URL to a raw content API URL.
@@ -141,8 +177,9 @@ func resolveAzureDevOps(u *url.URL, ref, filePath string) (string, error) {
 	params.Set("$format", "text")
 
 	if ref != "" {
-		params.Set("versionDescriptor.version", ref)
-		params.Set("versionDescriptor.versionType", "branch")
+		version := strings.TrimPrefix(ref, "refs/tags/")
+		params.Set("versionDescriptor.version", version)
+		params.Set("versionDescriptor.versionType", resolveAzureVersionType(ref))
 	}
 
 	return apiURL + "?" + params.Encode(), nil

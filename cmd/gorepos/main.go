@@ -23,6 +23,9 @@ var (
 	verbose bool
 	dryRun  bool
 
+	// version is set at build time via -ldflags "-X main.version=..."
+	version = "dev"
+
 	// init command flags
 	initPath     string
 	initBasePath string
@@ -175,11 +178,6 @@ func loadConfig() (*types.Config, error) {
 	return loader.LoadConfig(configPath)
 }
 
-// filterRepositoriesByContext delegates to the shared helper in the commands package.
-func filterRepositoriesByContext(repos []types.Repository, basePath string) []types.Repository {
-	return commands.FilterRepositoriesByContext(repos, basePath)
-}
-
 // runStatus executes the status command
 func runStatus(cmd *cobra.Command, args []string) error {
 	statusCommand := commands.NewStatusCommand()
@@ -210,7 +208,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("=", 40))
 
 	// Filter repositories based on current working directory context
-	contextRepos := filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+	contextRepos := commands.FilterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
 
 	// Prepare operations for enabled repositories that exist in current context
 	var operations []types.Operation
@@ -234,7 +232,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		operations = append(operations, types.Operation{
 			Repository: repo,
 			Command:    "update",
-			Context:    ctx,
 		})
 	}
 
@@ -288,7 +285,7 @@ func runClone(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("=", 40))
 
 	// Filter repositories based on current working directory context
-	contextRepos := filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+	contextRepos := commands.FilterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
 
 	// Prepare operations for enabled repositories that don't exist in current context
 	var operations []types.Operation
@@ -314,7 +311,6 @@ func runClone(cmd *cobra.Command, args []string) error {
 		operations = append(operations, types.Operation{
 			Repository: repo,
 			Command:    "clone",
-			Context:    ctx,
 		})
 	}
 

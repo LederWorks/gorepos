@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/LederWorks/gorepos/pkg/types"
@@ -66,10 +67,25 @@ func TestNewManager(t *testing.T) {
 // --- getRepoPath ---
 
 func TestGetRepoPath_AbsolutePath(t *testing.T) {
+	// Absolute path with no basePath: no containment check, should succeed.
+	m := NewManager("")
+	repo := &types.Repository{Path: "/absolute/path"}
+	got, err := m.getRepoPath(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "/absolute/path" {
+		t.Errorf("expected '/absolute/path', got %q", got)
+	}
+}
+
+func TestGetRepoPath_AbsolutePathEscapesBase(t *testing.T) {
+	// Absolute path that does not lie inside basePath must be rejected (SEC-C2).
 	m := NewManager("/base")
 	repo := &types.Repository{Path: "/absolute/path"}
-	if got := m.getRepoPath(repo); got != "/absolute/path" {
-		t.Errorf("expected '/absolute/path', got %q", got)
+	_, err := m.getRepoPath(repo)
+	if err == nil {
+		t.Error("expected error when absolute path escapes basePath")
 	}
 }
 
@@ -77,7 +93,11 @@ func TestGetRepoPath_RelativeWithBasePath(t *testing.T) {
 	m := NewManager("/base")
 	repo := &types.Repository{Path: "relative"}
 	expected := "/base/relative"
-	if got := m.getRepoPath(repo); got != expected {
+	got, err := m.getRepoPath(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
 	}
 }
@@ -85,8 +105,22 @@ func TestGetRepoPath_RelativeWithBasePath(t *testing.T) {
 func TestGetRepoPath_RelativeWithoutBasePath(t *testing.T) {
 	m := NewManager("")
 	repo := &types.Repository{Path: "relative"}
-	if got := m.getRepoPath(repo); got != "relative" {
+	got, err := m.getRepoPath(repo)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "relative" {
 		t.Errorf("expected 'relative', got %q", got)
+	}
+}
+
+func TestGetRepoPath_TraversalBlocked(t *testing.T) {
+	// Path traversal via ../ must be rejected when basePath is set (SEC-C2).
+	m := NewManager("/base")
+	repo := &types.Repository{Path: "../../etc/passwd"}
+	_, err := m.getRepoPath(repo)
+	if err == nil {
+		t.Error("expected error for path traversal attempt")
 	}
 }
 
@@ -426,5 +460,39 @@ func TestBuildEnvironment_InheritsOSEnv(t *testing.T) {
 	// Should have at least the OS environment
 	if len(env) == 0 {
 		t.Error("expected environment to include OS env vars")
+	}
+}
+
+func TestBuildEnvironment_BlocksDangerousKeys(t *testing.T) {
+	// SEC-C1: blocked env keys must not appear in the subprocess environment.
+	m := NewManager("")
+	repo := &types.Repository{
+		Name: "test",
+		Path: "/tmp/test",
+		Environment: map[string]string{
+			"GIT_SSH_COMMAND":       "evil",
+			"GIT_SSH":               "evil",
+			"GIT_PROXY_COMMAND":     "evil",
+			"GIT_EXEC_PATH":         "evil",
+			"GIT_ASKPASS":           "evil",
+			"GIT_TEMPLATE_DIR":      "evil",
+			"LD_PRELOAD":            "evil",
+			"DYLD_INSERT_LIBRARIES": "evil",
+		},
+	}
+
+	env := m.buildEnvironment(repo)
+
+	blockedPrefixes := []string{
+		"GIT_SSH_COMMAND=", "GIT_SSH=", "GIT_PROXY_COMMAND=",
+		"GIT_EXEC_PATH=", "GIT_ASKPASS=", "GIT_TEMPLATE_DIR=",
+		"LD_PRELOAD=", "DYLD_INSERT_LIBRARIES=",
+	}
+	for _, prefix := range blockedPrefixes {
+		for _, e := range env {
+			if strings.HasPrefix(e, prefix) && strings.HasSuffix(e, "=evil") {
+				t.Errorf("dangerous env key leaked into environment: %s", e)
+			}
+		}
 	}
 }

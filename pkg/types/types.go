@@ -137,19 +137,25 @@ type Config struct {
 
 // GlobalConfig contains global settings
 type GlobalConfig struct {
-	BasePath    string                 `yaml:"basePath,omitempty"`
-	Workers     int                    `yaml:"workers,omitempty" validate:"omitempty,min=1,max=100"`
-	Timeout     time.Duration          `yaml:"timeout,omitempty" validate:"omitempty,min=1s"`
-	Environment map[string]string      `yaml:"environment,omitempty"`
-	Tags        map[string]interface{} `yaml:"tags,omitempty"`   // Global key-value tags
-	Labels      []string               `yaml:"labels,omitempty"` // Global simple labels
-	Credentials *CredentialConfig      `yaml:"credentials,omitempty"`
-	Platforms   []PlatformEntry        `yaml:"platforms,omitempty"` // Custom/self-hosted git platform registrations
+	BasePath      string                 `yaml:"basePath,omitempty"`
+	Workers       int                    `yaml:"workers,omitempty" validate:"omitempty,min=1,max=100"`
+	Timeout       time.Duration          `yaml:"timeout,omitempty" validate:"omitempty,min=1s"`
+	Environment   map[string]string      `yaml:"environment,omitempty"`
+	Tags          map[string]interface{} `yaml:"tags,omitempty"`   // Global key-value tags
+	Labels        []string               `yaml:"labels,omitempty"` // Global simple labels
+	Credentials   *CredentialConfig      `yaml:"credentials,omitempty"`
+	Platforms     []PlatformEntry        `yaml:"platforms,omitempty"` // Custom/self-hosted git platform registrations
+	// HierarchyRoot is the directory name used as the boundary when extracting
+	// hierarchy paths from config file paths. Everything after this directory
+	// name becomes the hierarchy path (e.g. "configs/prod/east/gorepos.yaml"
+	// → ["prod", "east"]). Defaults to "configs" when empty (H-5).
+	HierarchyRoot string `yaml:"hierarchyRoot,omitempty"`
 }
 
 // PlatformEntry registers a custom or self-hosted git hosting platform so that
 // gorepos can construct raw-content URLs for it. Use this to support self-hosted
-// GitLab, Gitea, Forgejo, or on-premise Azure DevOps instances.
+// GitLab instances, on-premise Azure DevOps, or GitHub Enterprise Server.
+// Gitea and Forgejo deployments can be registered using type "github" (GitHub-compatible API).
 // Hostname is matched case-insensitively against the host portion of include repo URLs.
 // Type must be one of: "github", "gitlab", "azure", "bitbucket".
 type PlatformEntry struct {
@@ -157,8 +163,19 @@ type PlatformEntry struct {
 	Type     string `yaml:"type"`     // "github" | "gitlab" | "azure" | "bitbucket"
 }
 
-// CredentialConfig handles credential management
+// CredentialConfig handles credential management.
+//
+// Credential configuration for git operations is done via environment variables
+// passed to the git subprocess (e.g. GIT_ASKPASS, GITHUB_TOKEN used by the
+// git-credential-manager, or SSH_AUTH_SOCK for ssh-agent). The fields below
+// are parsed from YAML but NOT yet implemented at runtime — ValidateConfig will
+// return an error if any of them are set, directing the user to the correct
+// mechanism.
 type CredentialConfig struct {
+	// SSHKeyPath, GitCredHelper, and TokenEnvVar are parsed from YAML but NOT
+	// implemented. Setting any of them produces a validation error (H-4/SEC-M3).
+	// Configure SSH via GIT_SSH_COMMAND, tokens via the git credential manager,
+	// and credential helpers via the git-config credential.helper setting.
 	SSHKeyPath    string `yaml:"sshKeyPath,omitempty"`
 	GitCredHelper string `yaml:"gitCredHelper,omitempty"`
 	TokenEnvVar   string `yaml:"tokenEnvVar,omitempty"`
@@ -166,12 +183,14 @@ type CredentialConfig struct {
 	GitUserEmail  string `yaml:"gitUserEmail,omitempty"` // default user.email for local repo git config
 }
 
-// Operation represents a repository operation
+// Operation represents a repository operation.
+// The execution context is supplied at the pool level via Execute(ctx, ...) and
+// must not be duplicated here — a per-operation Context field would conflict with
+// the pool-level cancellation and was never read by the executor (H-3).
 type Operation struct {
 	Repository *Repository
 	Command    string
 	Args       []string
-	Context    context.Context
 }
 
 // Result represents the result of a repository operation
