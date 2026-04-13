@@ -349,7 +349,7 @@ for target in "${BUILD_TARGETS[@]}"; do
     # Build command arguments
     build_args=(
         "build"
-        "-ldflags" "-s -w -X github.com/LederWorks/gorepos/cmd/gorepos.version=$VERSION"
+        "-ldflags" "-s -w -X main.version=$VERSION"
         "-o" "$output_file"
     )
     

@@ -135,6 +135,17 @@ func (l *Loader) ValidateConfig(config *types.Config) error {
 		if inc.Repo == "" && (inc.User != "" || inc.Email != "") {
 			return fmt.Errorf("include[%d]: 'user' and 'email' require 'repo' to be set (local includes inherit from global credentials)", i)
 		}
+		// Validate user/email values when present — reuse the same logic as setup.go
+		if inc.User != "" {
+			if err := validateUserName(inc.User); err != nil {
+				return fmt.Errorf("include[%d]: invalid user: %w", i, err)
+			}
+		}
+		if inc.Email != "" {
+			if err := validateEmail(inc.Email); err != nil {
+				return fmt.Errorf("include[%d]: invalid email: %w", i, err)
+			}
+		}
 	}
 
 	repoNames := make(map[string]bool)

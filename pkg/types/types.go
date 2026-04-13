@@ -44,7 +44,9 @@ type IncludeEntry struct {
 // UnmarshalYAML handles both plain string and structured mapping forms.
 func (e *IncludeEntry) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
-		e.Path = value.Value
+		// Zero the entire struct before setting Path so that stale fields from
+		// a previously decoded value are never retained.
+		*e = IncludeEntry{Path: value.Value}
 		return nil
 	}
 	if value.Kind == yaml.MappingNode {
