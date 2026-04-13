@@ -56,9 +56,9 @@ func NewGraphBuilderWithLoaders(
 	}
 }
 
-// WithHierarchyRoot returns a copy of the builder with a custom hierarchy root sentinel.
-// This allows projects that do not use a "configs" directory to still benefit from
-// proper hierarchy path extraction and group scope inheritance (H-5).
+// WithHierarchyRoot sets the hierarchy root sentinel on the builder and returns the builder
+// for chaining. This allows projects that do not use a "configs" directory to still benefit
+// from proper hierarchy path extraction and group scope inheritance (H-5).
 func (b *GraphBuilder) WithHierarchyRoot(root string) *GraphBuilder {
 	b.hierarchyRoot = root
 	return b

@@ -125,11 +125,18 @@ func resolveGitHub(u *url.URL, ref, filePath string) (string, error) {
 		hostname, owner, repo, ref, filePath), nil
 }
 
+// semverTagPattern matches semver-style version refs such as "v1.0.0", "1.2.3",
+// "v2.0.0-beta1". It is used by resolveAzureVersionType to distinguish tag refs
+// from branch names that start with "v" (e.g., "versioning", "v-next").
+var semverTagPattern = regexp.MustCompile(`^v?\d+(\.\d+)*(-.*)?$`)
+
 // resolveAzureVersionType returns the correct versionDescriptor.versionType value for the
 // Azure DevOps Items API based on the ref string.
 //
 //   - A full 40-hex character string → "commit"
-//   - A ref prefixed with "refs/tags/" or a semver-style "v" prefix → "tag"
+//   - A ref prefixed with "refs/tags/" → "tag"
+//   - A ref prefixed with "refs/heads/" → "branch"
+//   - A ref matching the semver pattern (e.g. v1.0.0, 1.2.3, v2.0.0-beta1) → "tag"
 //   - Anything else → "branch"
 func resolveAzureVersionType(ref string) string {
 	// Full 40-character hex commit SHA
@@ -138,8 +145,17 @@ func resolveAzureVersionType(ref string) string {
 			return "commit"
 		}
 	}
-	// Common tag prefixes
-	if strings.HasPrefix(ref, "refs/tags/") || strings.HasPrefix(ref, "v") {
+	// Explicit refs/ namespaced refs
+	if strings.HasPrefix(ref, "refs/tags/") {
+		return "tag"
+	}
+	if strings.HasPrefix(ref, "refs/heads/") {
+		return "branch"
+	}
+	// Semver-style tag detection (e.g. v1.0.0, 1.2.3, v2.0.0-beta1).
+	// Plain "v" prefix is not sufficient: branch names like "versioning" or "v-next"
+	// would be misclassified. Require numeric version components after the optional v.
+	if semverTagPattern.MatchString(ref) {
 		return "tag"
 	}
 	return "branch"

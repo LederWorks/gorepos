@@ -22,33 +22,40 @@ properties:
         - type: string
           description: "Local file path (relative or absolute) or raw HTTP/HTTPS URL"
         - type: object
-          description: "Structured git repository source with optional ref and file path"
-          required: ["repo"]
-          properties:
-            repo:
-              type: string
-              format: uri
-              description: "Git repository URL (GitHub, Azure DevOps, GitLab, Bitbucket)"
-              examples:
-                - "https://github.com/org/repo"
-                - "https://dev.azure.com/org/project/_git/repo"
-            ref:
-              type: string
-              description: "Branch name, tag (as refs/tags/<TAG>), or commit hash (omit for default branch)"
-              examples: ["main", "develop", "refs/tags/v1.0.0", "abc123f"]
-            file:
-              type: string
-              description: "Path to the config file within the repository"
-              default: "gorepos.yaml"
-            user:
-              type: string
-              description: "Git user.name applied to repos from this config source. Overrides global.credentials.gitUserName for repos loaded from this include. Per-repo user field still takes highest precedence."
-              examples: ["Jane Dev", "John Smith"]
-            email:
-              type: string
-              description: "Git user.email applied to repos from this config source. Overrides global.credentials.gitUserEmail for repos loaded from this include. Per-repo email field still takes highest precedence."
-              examples: ["jane@example.com", "john@company.com"]
-          additionalProperties: false
+          description: "Structured include source: either a local path object or a remote git repository source"
+          oneOf:
+            - required: ["path"]
+              properties:
+                path:
+                  type: string
+                  description: "Local path to include file"
+              additionalProperties: false
+            - required: ["repo"]
+              properties:
+                repo:
+                  type: string
+                  description: "Remote git repository URL (https:// or git@host:org/repo)"
+                  examples:
+                    - "https://github.com/org/repo"
+                    - "https://dev.azure.com/org/project/_git/repo"
+                    - "git@github.com:org/repo"
+                ref:
+                  type: string
+                  description: "Branch name, tag (as refs/tags/<TAG>), or commit hash (omit for default branch)"
+                  examples: ["main", "develop", "refs/tags/v1.0.0", "abc123f"]
+                file:
+                  type: string
+                  description: "Path to the config file within the repository"
+                  default: "gorepos.yaml"
+                user:
+                  type: string
+                  description: "Git user.name applied to repos from this config source. Overrides global.credentials.gitUserName for repos loaded from this include. Per-repo user field still takes highest precedence."
+                  examples: ["Jane Dev", "John Smith"]
+                email:
+                  type: string
+                  description: "Git user.email applied to repos from this config source. Overrides global.credentials.gitUserEmail for repos loaded from this include. Per-repo email field still takes highest precedence."
+                  examples: ["jane@example.com", "john@company.com"]
+              additionalProperties: false
     examples:
       - - "./configs/github.yaml"
         - "https://raw.githubusercontent.com/LederWorks/gorepos-config/main/gorepos.yaml"

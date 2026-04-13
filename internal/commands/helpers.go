@@ -71,7 +71,8 @@ func FilterRepositoriesByContext(repositories []types.Repository, basePath strin
 
 	var result []types.Repository
 	for _, repo := range repositories {
-		if strings.HasPrefix(filepath.ToSlash(repo.Path), relPath) {
+		repoPath := filepath.ToSlash(repo.Path)
+		if repoPath == relPath || strings.HasPrefix(repoPath, relPath+"/") {
 			result = append(result, repo)
 		}
 	}

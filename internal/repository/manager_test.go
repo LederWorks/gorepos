@@ -478,6 +478,8 @@ func TestBuildEnvironment_BlocksDangerousKeys(t *testing.T) {
 			"GIT_TEMPLATE_DIR":      "evil",
 			"LD_PRELOAD":            "evil",
 			"DYLD_INSERT_LIBRARIES": "evil",
+			"PATH":                  "evil",
+			"GIT_CONFIG_GLOBAL":     "evil",
 		},
 	}
 
@@ -487,6 +489,7 @@ func TestBuildEnvironment_BlocksDangerousKeys(t *testing.T) {
 		"GIT_SSH_COMMAND=", "GIT_SSH=", "GIT_PROXY_COMMAND=",
 		"GIT_EXEC_PATH=", "GIT_ASKPASS=", "GIT_TEMPLATE_DIR=",
 		"LD_PRELOAD=", "DYLD_INSERT_LIBRARIES=",
+		"PATH=", "GIT_CONFIG_GLOBAL=",
 	}
 	for _, prefix := range blockedPrefixes {
 		for _, e := range env {

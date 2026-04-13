@@ -24,6 +24,10 @@ var BlockedEnvKeys = map[string]struct{}{
 	"GIT_TEMPLATE_DIR":      {},
 	"LD_PRELOAD":            {},
 	"DYLD_INSERT_LIBRARIES": {},
+	// PATH can redirect git execution to a malicious binary; always inherit from the OS.
+	"PATH": {},
+	// GIT_CONFIG_GLOBAL allows overriding the global git config with an attacker-controlled file.
+	"GIT_CONFIG_GLOBAL": {},
 }
 
 // isAllowedRepoURL returns nil if rawURL is an acceptable repository URL, or an
