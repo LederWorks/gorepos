@@ -13,12 +13,14 @@ import (
 // For SCP URLs it returns a synthetic *url.URL with Scheme="ssh", Host set to the hostname,
 // and Path set to "/"+the repo path, so all callers can use url.URL methods uniformly.
 // Standard URLs (those containing "://") are forwarded to url.Parse unchanged.
+// Requiring "@" prevents Windows absolute paths like "C:/path" from being misclassified.
 func parseSCPOrURL(rawURL string) (*url.URL, error) {
-	// SCP syntax never contains "://" — distinguish from valid URLs like ssh://host/path.
-	if !strings.Contains(rawURL, "://") {
+	// SCP syntax: [user@]host:path — must contain "@" and no "://" (to exclude real URLs).
+	// The "@" requirement guards against Windows drive-letter paths (e.g., C:/repo).
+	if strings.Contains(rawURL, "@") && !strings.Contains(rawURL, "://") {
 		if colonIdx := strings.Index(rawURL, ":"); colonIdx > 0 {
 			hostPart := rawURL[:colonIdx]
-			// Strip optional user@ prefix (e.g. "git" in "git@github.com:org/repo").
+			// Strip user@ prefix (e.g. "git" in "git@github.com:org/repo").
 			if atIdx := strings.LastIndex(hostPart, "@"); atIdx >= 0 {
 				hostPart = hostPart[atIdx+1:]
 			}

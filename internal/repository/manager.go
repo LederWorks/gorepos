@@ -137,7 +137,7 @@ func (m *Manager) Update(ctx context.Context, repo *types.Repository) error {
 	// used regardless of which branch is currently checked out locally.
 	branch := repo.Branch
 	if branch == "" {
-		branch = "main"
+		branch = types.DefaultBranch
 	}
 	cmd = exec.CommandContext(ctx, "git", "pull", "--ff-only", "origin", branch)
 	cmd.Dir = repoPath
@@ -207,7 +207,7 @@ func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.Re
 	// Get ahead/behind info
 	targetBranch := repo.Branch
 	if targetBranch == "" {
-		targetBranch = "main"
+		targetBranch = types.DefaultBranch
 	}
 
 	cmd = exec.CommandContext(ctx, "git", "rev-list", "--count", "--left-right", fmt.Sprintf("HEAD...origin/%s", targetBranch))

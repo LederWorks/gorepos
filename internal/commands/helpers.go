@@ -64,12 +64,13 @@ func FilterRepositoriesByContext(repositories []types.Repository, basePath strin
 	}
 
 	// At base path or outside (including false-positive like /base matching /base2) — show everything.
-	// Use a trailing "/" in the prefix check to match on segment boundaries.
-	if normCwd == normBase || !strings.HasPrefix(normCwd, normBase+"/") {
+	// Compute the boundary-aware prefix once to avoid duplication.
+	normBaseSlash := normBase + "/"
+	if normCwd == normBase || !strings.HasPrefix(normCwd, normBaseSlash) {
 		return repositories
 	}
 
-	relPath := strings.TrimPrefix(normCwd, normBase+"/")
+	relPath := strings.TrimPrefix(normCwd, normBaseSlash)
 	relPath = strings.Trim(relPath, "/")
 	if relPath == "" {
 		return repositories

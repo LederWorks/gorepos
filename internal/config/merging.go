@@ -114,7 +114,7 @@ func (l *Loader) setDefaults(config *types.Config) {
 	// Set default branch for repositories if not specified
 	for i := range config.Repositories {
 		if config.Repositories[i].Branch == "" {
-			config.Repositories[i].Branch = "main"
+			config.Repositories[i].Branch = types.DefaultBranch
 		}
 	}
 

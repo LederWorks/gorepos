@@ -9,6 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultBranch is the branch name used when a repository or include does not specify one.
+const DefaultBranch = "main"
+
 // Repository represents a single repository configuration
 type Repository struct {
 	Name        string                 `yaml:"name" validate:"required,min=1"`
