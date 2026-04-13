@@ -53,8 +53,8 @@ func FilterRepositoriesByContext(repositories []types.Repository, basePath strin
 		return repositories
 	}
 
-	// Resolve symlinks so macOS /var → /private/var doesn't break prefix matching.
-	// Clean paths first to normalize trailing slashes (e.g. "/base/" → "/base").
+	// Normalize paths with filepath.Clean (removes trailing slashes, resolves . and ..)
+	// then resolve symlinks so macOS /var → /private/var doesn't break prefix matching.
 	normBase := filepath.ToSlash(filepath.Clean(basePath))
 	if real, err := filepath.EvalSymlinks(basePath); err == nil {
 		normBase = filepath.ToSlash(filepath.Clean(real))

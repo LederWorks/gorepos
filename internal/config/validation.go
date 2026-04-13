@@ -38,7 +38,7 @@ func isAllowedRepoURL(rawURL string) error {
 		// Must have host:path after "git@"
 		rest := rawURL[4:]
 		colonIdx := strings.Index(rest, ":")
-		if colonIdx <= 0 || colonIdx >= len(rest)-1 {
+		if colonIdx < 0 || colonIdx >= len(rest)-1 {
 			return fmt.Errorf("malformed SCP URL %q: expected git@host:path", rawURL)
 		}
 		return nil
