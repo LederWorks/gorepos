@@ -33,8 +33,14 @@ var BlockedEnvKeys = map[string]struct{}{
 // isAllowedRepoURL returns nil if rawURL is an acceptable repository URL, or an
 // error describing why it is not. Accepted forms: SCP git@ syntax, https://, ssh://.
 func isAllowedRepoURL(rawURL string) error {
-	// SCP-syntax git@github.com:org/repo.git is universally accepted.
+	// SCP-syntax git@github.com:org/repo.git — validate host:path structure.
 	if strings.HasPrefix(rawURL, "git@") {
+		// Must have host:path after "git@"
+		rest := rawURL[4:]
+		colonIdx := strings.Index(rest, ":")
+		if colonIdx <= 0 || colonIdx >= len(rest)-1 {
+			return fmt.Errorf("malformed SCP URL %q: expected git@host:path", rawURL)
+		}
 		return nil
 	}
 	u, err := url.Parse(rawURL)
@@ -43,6 +49,12 @@ func isAllowedRepoURL(rawURL string) error {
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "https", "ssh":
+		if u.Host == "" {
+			return fmt.Errorf("URL %q has no host", rawURL)
+		}
+		if u.Path == "" || u.Path == "/" {
+			return fmt.Errorf("URL %q has no path (expected at least /owner/repo)", rawURL)
+		}
 		return nil
 	case "http":
 		return fmt.Errorf("http:// URLs are not permitted; use https://")
@@ -85,7 +97,7 @@ func (l *Loader) ValidateConfig(config *types.Config) error {
 			return fmt.Errorf("global credentials: sshKeyPath is not yet implemented; configure SSH via the GIT_SSH_COMMAND environment variable")
 		}
 		if creds.GitCredHelper != "" {
-			return fmt.Errorf("global credentials: gitCredHelper is not yet implemented; set credential.helper via git-config or GIT_CONFIG_GLOBAL")
+			return fmt.Errorf("global credentials: gitCredHelper is not yet implemented; configure credential.helper directly in your git config files (e.g., git config --global credential.helper manager)")
 		}
 		if creds.TokenEnvVar != "" {
 			return fmt.Errorf("global credentials: tokenEnvVar is not yet implemented; pass the token via a git credential helper or the GITHUB_TOKEN/GITLAB_TOKEN environment variable")
@@ -227,8 +239,11 @@ func (l *Loader) ValidateConfig(config *types.Config) error {
 					return fmt.Errorf("repository[%d]: resolving repo path: %w", i, err)
 				}
 			}
-			sep := string(filepath.Separator)
-			if !strings.HasPrefix(absResolved+sep, absBase+sep) {
+			rel, err := filepath.Rel(absBase, absResolved)
+			if err != nil {
+				return fmt.Errorf("repository[%d] %q: path %q escapes basePath", i, repo.Name, repo.Path)
+			}
+			if strings.HasPrefix(rel, "..") {
 				return fmt.Errorf("repository[%d] %q: path %q escapes basePath", i, repo.Name, repo.Path)
 			}
 		}

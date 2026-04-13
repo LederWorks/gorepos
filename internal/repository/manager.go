@@ -299,6 +299,8 @@ func (m *Manager) getRepoPath(repo *types.Repository) (string, error) {
 
 	// Containment check: when a basePath is set, the resolved path must stay
 	// inside it (prevents both relative ../../ traversal and absolute escapes).
+	// Uses filepath.Rel which correctly handles cross-volume paths on Windows
+	// and avoids case-sensitivity issues with raw string prefix matching.
 	if m.basePath != "" {
 		absBase, err := filepath.Abs(m.basePath)
 		if err != nil {
@@ -308,8 +310,12 @@ func (m *Manager) getRepoPath(repo *types.Repository) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("resolving repo path: %w", err)
 		}
-		sep := string(filepath.Separator)
-		if !strings.HasPrefix(absResolved+sep, absBase+sep) {
+		rel, err := filepath.Rel(absBase, absResolved)
+		if err != nil {
+			// filepath.Rel fails on Windows when paths are on different volumes
+			return "", fmt.Errorf("repository path %q escapes basePath %q", repo.Path, m.basePath)
+		}
+		if strings.HasPrefix(rel, "..") {
 			return "", fmt.Errorf("repository path %q escapes basePath %q", repo.Path, m.basePath)
 		}
 	}

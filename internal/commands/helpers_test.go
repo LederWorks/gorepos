@@ -121,6 +121,27 @@ func TestFilterRepositoriesByContext_NoBoundaryFalsePositive(t *testing.T) {
 	}
 }
 
+func TestFilterRepositoriesByContext_TrailingSlashBasePath(t *testing.T) {
+	basePath := t.TempDir()
+	subDir := filepath.Join(basePath, "org")
+	_ = os.MkdirAll(subDir, 0755)
+
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "other/b"),
+	}
+
+	orig, _ := os.Getwd()
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(subDir)
+
+	// basePath with trailing slash should still work correctly
+	result := FilterRepositoriesByContext(repos, basePath+"/")
+	if len(result) != 1 || result[0].Name != "a" {
+		t.Errorf("expected only repo 'a' with trailing-slash basePath, got %v", result)
+	}
+}
+
 // --- GetContextRepositoryNames ---
 
 func TestGetContextRepositoryNames_AtBasePath_ReturnsAll(t *testing.T) {

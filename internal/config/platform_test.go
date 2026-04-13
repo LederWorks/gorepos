@@ -104,6 +104,26 @@ func TestResolveRawContentURL_AzureDevOps(t *testing.T) {
 			},
 		},
 		{
+			name:    "refs/heads/ branch is stripped",
+			repoURL: "https://dev.azure.com/org/project/_git/repo",
+			ref:     "refs/heads/main",
+			file:    "gorepos.yaml",
+			wantContains: []string{
+				"versionDescriptor.version=main",
+				"versionDescriptor.versionType=branch",
+			},
+		},
+		{
+			name:    "refs/tags/ tag is stripped",
+			repoURL: "https://dev.azure.com/org/project/_git/repo",
+			ref:     "refs/tags/v1.0.0",
+			file:    "gorepos.yaml",
+			wantContains: []string{
+				"versionDescriptor.version=v1.0.0",
+				"versionDescriptor.versionType=tag",
+			},
+		},
+		{
 			name:    "missing _git segment",
 			repoURL: "https://dev.azure.com/org/project/repo",
 			ref:     "main",

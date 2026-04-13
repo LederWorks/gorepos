@@ -221,7 +221,10 @@ func resolveAzureDevOps(u *url.URL, ref, filePath string) (string, error) {
 	params.Set("$format", "text")
 
 	if ref != "" {
-		version := strings.TrimPrefix(ref, "refs/tags/")
+		// Normalize fully-qualified refs (refs/heads/main → main, refs/tags/v1.0 → v1.0)
+		// before setting the version descriptor. Azure DevOps expects bare names.
+		version := strings.TrimPrefix(ref, "refs/heads/")
+		version = strings.TrimPrefix(version, "refs/tags/")
 		params.Set("versionDescriptor.version", version)
 		params.Set("versionDescriptor.versionType", resolveAzureVersionType(ref))
 	}

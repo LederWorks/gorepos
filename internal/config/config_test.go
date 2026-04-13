@@ -678,6 +678,64 @@ func TestValidateConfig_IncludeRepo_SSHAllowed(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_IncludeRepo_EmptyHostRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for https:// URL with no host")
+	}
+}
+
+func TestValidateConfig_IncludeRepo_NoPathRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for URL with no path")
+	}
+}
+
+func TestValidateConfig_IncludeRepo_NoPathSlashRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com/"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for URL with bare slash path")
+	}
+}
+
+func TestValidateConfig_RepoURL_EmptyHostRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Repositories[0].URL = "https://"
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for repo URL with no host")
+	}
+}
+
+func TestValidateConfig_SCP_MalformedRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "git@"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for malformed SCP URL git@")
+	}
+}
+
 func TestCollectIdentityWarnings_NoWarningWithGlobalCreds(t *testing.T) {
 	c := validConfig()
 	c.Global.Credentials = &types.CredentialConfig{
