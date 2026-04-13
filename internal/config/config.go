@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/LederWorks/gorepos/pkg/graph"
@@ -35,8 +36,14 @@ func ValidateConfig(config *types.Config) error {
 
 // LoadConfigWithGraph loads configuration using dependency graph for scope-aware inheritance
 func LoadConfigWithGraph(path string) (*types.Config, error) {
-	// Build repository graph
-	builder := graph.NewGraphBuilder()
+	// Build repository graph with remote loaders injected to avoid circular imports
+	loader := NewLoader()
+	builder := graph.NewGraphBuilderWithLoaders(
+		func(repoURL, ref, file string) (*types.Config, error) {
+			return loader.LoadRemoteConfigViaGit(context.Background(), repoURL, ref, file)
+		},
+		loader.LoadRemoteConfig,
+	)
 	graphQuery, err := builder.BuildGraph(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build repository graph: %w", err)
@@ -45,8 +52,10 @@ func LoadConfigWithGraph(path string) (*types.Config, error) {
 	// Get merged configuration (inheritance is calculated during build)
 	config := graphQuery.GetMergedConfig()
 
+	// Apply defaults (workers, timeout, branch, version)
+	loader.setDefaults(config)
+
 	// Validate configuration
-	loader := NewLoader()
 	if err := loader.ValidateConfig(config); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}

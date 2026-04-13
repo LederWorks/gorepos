@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/LederWorks/gorepos/pkg/types"
 )
@@ -11,49 +12,57 @@ import (
 // Pool implements the Executor interface with a worker pool
 type Pool struct {
 	workerCount int
-	workers     []*worker
+	manager     types.RepositoryManager
 	mu          sync.RWMutex
-	started     bool
+	cancel      context.CancelFunc // tracks the most recent Execute context
 }
 
-// worker represents a single worker in the pool
-type worker struct {
-	id      int
-	jobs    chan types.Operation
-	results chan types.Result
-	done    chan bool
-	wg      *sync.WaitGroup
-}
-
-// NewPool creates a new executor pool
-func NewPool(workerCount int) *Pool {
+// NewPool creates a new executor pool with the given repository manager
+func NewPool(workerCount int, manager types.RepositoryManager) *Pool {
 	return &Pool{
 		workerCount: workerCount,
+		manager:     manager,
 	}
 }
 
-// Execute processes operations in parallel using the worker pool
+// Execute processes operations in parallel using the worker pool.
+// It is safe to call Stop concurrently, but Execute itself must not be called
+// concurrently — if a previous Execute is still in progress, this call returns
+// a closed channel immediately. Create a new Pool for concurrent execution.
 func (p *Pool) Execute(ctx context.Context, operations []types.Operation) <-chan types.Result {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Initialize workers if not started
-	if !p.started {
-		p.start()
+	if p.cancel != nil {
+		// A previous Execute is still running. Return a closed channel so callers
+		// drain immediately rather than blocking forever.
+		p.mu.Unlock()
+		ch := make(chan types.Result)
+		close(ch)
+		return ch
 	}
+	workerCount := p.workerCount
+	execCtx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	p.mu.Unlock()
 
 	results := make(chan types.Result, len(operations))
 
 	go func() {
 		defer close(results)
+		defer func() {
+			// Clear p.cancel once the goroutine finishes so Execute can be reused.
+			p.mu.Lock()
+			p.cancel = nil
+			p.mu.Unlock()
+		}()
+		defer cancel()
 
 		var wg sync.WaitGroup
 		jobChan := make(chan types.Operation, len(operations))
 
 		// Start workers
-		for i := 0; i < p.workerCount; i++ {
+		for i := 0; i < workerCount; i++ {
 			wg.Add(1)
-			go p.worker(ctx, i, jobChan, results, &wg)
+			go p.worker(execCtx, i, jobChan, results, &wg)
 		}
 
 		// Send operations to workers
@@ -62,7 +71,7 @@ func (p *Pool) Execute(ctx context.Context, operations []types.Operation) <-chan
 			for _, op := range operations {
 				select {
 				case jobChan <- op:
-				case <-ctx.Done():
+				case <-execCtx.Done():
 					return
 				}
 			}
@@ -76,7 +85,7 @@ func (p *Pool) Execute(ctx context.Context, operations []types.Operation) <-chan
 }
 
 // worker processes operations from the job channel
-func (p *Pool) worker(ctx context.Context, id int, jobs <-chan types.Operation, results chan<- types.Result, wg *sync.WaitGroup) {
+func (p *Pool) worker(ctx context.Context, _ int, jobs <-chan types.Operation, results chan<- types.Result, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
@@ -88,11 +97,11 @@ func (p *Pool) worker(ctx context.Context, id int, jobs <-chan types.Operation, 
 
 			result := p.executeOperation(ctx, &job)
 
-			select {
-			case results <- *result:
-			case <-ctx.Done():
-				return
-			}
+			// The results channel is buffered to len(operations), so this send
+			// never blocks — there is always a slot available. We do NOT select
+			// on ctx.Done() here because that would silently drop a completed
+			// result and cause callers to miss errors from finished work.
+			results <- *result
 
 		case <-ctx.Done():
 			return
@@ -100,40 +109,59 @@ func (p *Pool) worker(ctx context.Context, id int, jobs <-chan types.Operation, 
 	}
 }
 
-// executeOperation executes a single operation
+// executeOperation executes a single operation using the repository manager
 func (p *Pool) executeOperation(ctx context.Context, op *types.Operation) *types.Result {
-	// This is a simplified execution - in practice, this would delegate to
-	// the appropriate service (repository manager, etc.)
-
 	result := &types.Result{
 		Repository: op.Repository,
 		Operation:  op.Command,
+		StartTime:  time.Now(),
 	}
 
-	// Check context cancellation
 	if ctx.Err() != nil {
 		result.Error = ctx.Err()
 		result.Success = false
+		result.Duration = time.Since(result.StartTime)
 		return result
 	}
 
-	// For now, we'll just simulate the operation
-	// In a real implementation, this would call the appropriate manager
 	switch op.Command {
 	case "clone":
-		result.Output = fmt.Sprintf("Would clone %s to %s", op.Repository.URL, op.Repository.Path)
-		result.Success = true
+		err := p.manager.Clone(ctx, op.Repository)
+		if err != nil {
+			result.Error = fmt.Errorf("clone %s: %w", op.Repository.Name, err)
+			result.Success = false
+		} else {
+			result.Output = fmt.Sprintf("cloned %s to %s", op.Repository.URL, op.Repository.Path)
+			result.Success = true
+		}
+
 	case "update":
-		result.Output = fmt.Sprintf("Would update repository at %s", op.Repository.Path)
-		result.Success = true
+		err := p.manager.Update(ctx, op.Repository)
+		if err != nil {
+			result.Error = fmt.Errorf("update %s: %w", op.Repository.Name, err)
+			result.Success = false
+		} else {
+			result.Output = fmt.Sprintf("updated %s", op.Repository.Name)
+			result.Success = true
+		}
+
 	case "status":
-		result.Output = fmt.Sprintf("Would check status of repository at %s", op.Repository.Path)
-		result.Success = true
+		status, err := p.manager.Status(ctx, op.Repository)
+		if err != nil {
+			result.Error = fmt.Errorf("status %s: %w", op.Repository.Name, err)
+			result.Success = false
+		} else {
+			result.StatusData = status
+			result.Output = fmt.Sprintf("status of %s retrieved", op.Repository.Name)
+			result.Success = true
+		}
+
 	default:
 		result.Error = fmt.Errorf("unknown operation: %s", op.Command)
 		result.Success = false
 	}
 
+	result.Duration = time.Since(result.StartTime)
 	return result
 }
 
@@ -150,14 +178,6 @@ func (p *Pool) SetWorkerCount(count int) {
 	}
 
 	p.workerCount = count
-
-	// If already started, we'd need to restart with new worker count
-	// For simplicity, we'll require stopping and restarting
-	if p.started {
-		// In a production implementation, you might want to gracefully
-		// resize the pool without stopping
-		fmt.Printf("Warning: Worker count changed to %d. Restart required for changes to take effect.\n", count)
-	}
 }
 
 // Shutdown gracefully shuts down the executor pool
@@ -165,49 +185,12 @@ func (p *Pool) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if !p.started {
-		return nil
+	if p.cancel != nil {
+		p.cancel()
+		p.cancel = nil
 	}
 
-	// Signal all workers to stop
-	for _, worker := range p.workers {
-		close(worker.done)
-	}
-
-	// Wait for workers to finish with timeout
-	done := make(chan bool)
-	go func() {
-		for _, worker := range p.workers {
-			worker.wg.Wait()
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-		p.started = false
-		p.workers = nil
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// start initializes the workers
-func (p *Pool) start() {
-	p.workers = make([]*worker, p.workerCount)
-
-	for i := 0; i < p.workerCount; i++ {
-		p.workers[i] = &worker{
-			id:      i,
-			jobs:    make(chan types.Operation, 10),
-			results: make(chan types.Result, 10),
-			done:    make(chan bool),
-			wg:      &sync.WaitGroup{},
-		}
-	}
-
-	p.started = true
+	return nil
 }
 
 // GetWorkerCount returns the current worker count
@@ -215,11 +198,4 @@ func (p *Pool) GetWorkerCount() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.workerCount
-}
-
-// IsStarted returns whether the pool is started
-func (p *Pool) IsStarted() bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.started
 }

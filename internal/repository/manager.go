@@ -9,12 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LederWorks/gorepos/internal/config"
 	"github.com/LederWorks/gorepos/pkg/types"
 )
 
 // Manager implements the RepositoryManager interface
 type Manager struct {
-	basePath string
+	basePath    string
+	credentials *types.CredentialConfig // may be nil
 }
 
 // NewManager creates a new repository manager
@@ -24,9 +26,20 @@ func NewManager(basePath string) *Manager {
 	}
 }
 
+// NewManagerWithCredentials creates a repository manager that sets per-repo git identity after clone.
+func NewManagerWithCredentials(basePath string, creds *types.CredentialConfig) *Manager {
+	return &Manager{
+		basePath:    basePath,
+		credentials: creds,
+	}
+}
+
 // Clone clones a repository if it doesn't exist
 func (m *Manager) Clone(ctx context.Context, repo *types.Repository) error {
-	repoPath := m.getRepoPath(repo)
+	repoPath, err := m.getRepoPath(repo)
+	if err != nil {
+		return fmt.Errorf("resolving repository path: %w", err)
+	}
 
 	if m.Exists(repo) {
 		return fmt.Errorf("repository already exists at %s", repoPath)
@@ -51,18 +64,55 @@ func (m *Manager) Clone(ctx context.Context, repo *types.Repository) error {
 		return fmt.Errorf("git clone failed: %w\nOutput: %s", err, string(output))
 	}
 
+	// Set local git identity (never touches --global config).
+	// Use -- to prevent git from interpreting the value as a flag (SEC-H3).
+	if user := m.effectiveUser(repo); user != "" {
+		if err := exec.CommandContext(ctx, "git", "-C", repoPath, "config", "user.name", "--", user).Run(); err != nil {
+			return fmt.Errorf("setting git user.name: %w", err)
+		}
+	}
+	if email := m.effectiveEmail(repo); email != "" {
+		if err := exec.CommandContext(ctx, "git", "-C", repoPath, "config", "user.email", "--", email).Run(); err != nil {
+			return fmt.Errorf("setting git user.email: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func (m *Manager) effectiveUser(repo *types.Repository) string {
+	if repo.User != "" {
+		return repo.User
+	}
+	if m.credentials != nil {
+		return m.credentials.GitUserName
+	}
+	return ""
+}
+
+func (m *Manager) effectiveEmail(repo *types.Repository) string {
+	if repo.Email != "" {
+		return repo.Email
+	}
+	if m.credentials != nil {
+		return m.credentials.GitUserEmail
+	}
+	return ""
 }
 
 // Update updates an existing repository
 func (m *Manager) Update(ctx context.Context, repo *types.Repository) error {
 	if !m.Exists(repo) {
-		return fmt.Errorf("repository does not exist at %s", m.getRepoPath(repo))
+		repoPath, _ := m.getRepoPath(repo)
+		return fmt.Errorf("repository does not exist at %s", repoPath)
 	}
 
-	repoPath := m.getRepoPath(repo)
+	repoPath, err := m.getRepoPath(repo)
+	if err != nil {
+		return fmt.Errorf("resolving repository path: %w", err)
+	}
 
-	// Fetch latest changes
+	// Fetch latest changes from origin without modifying the working tree.
 	cmd := exec.CommandContext(ctx, "git", "fetch", "origin")
 	cmd.Dir = repoPath
 	cmd.Env = m.buildEnvironment(repo)
@@ -71,7 +121,8 @@ func (m *Manager) Update(ctx context.Context, repo *types.Repository) error {
 		return fmt.Errorf("git fetch failed: %w\nOutput: %s", err, string(output))
 	}
 
-	// Reset to origin branch if clean
+	// Refuse to update if there are uncommitted changes — the pull would abort
+	// anyway, but an early check gives a clearer message.
 	status, err := m.Status(ctx, repo)
 	if err != nil {
 		return fmt.Errorf("failed to check repository status: %w", err)
@@ -81,18 +132,22 @@ func (m *Manager) Update(ctx context.Context, repo *types.Repository) error {
 		return fmt.Errorf("repository has uncommitted changes, cannot update")
 	}
 
-	// Reset to origin branch
-	targetBranch := repo.Branch
-	if targetBranch == "" {
-		targetBranch = "main"
+	// Fast-forward only: never destroy local commits (H-2).
+	// Pull explicitly from origin/<branch> so the configured branch is always
+	// used regardless of which branch is currently checked out locally.
+	branch := repo.Branch
+	if branch == "" {
+		branch = types.DefaultBranch
 	}
-
-	cmd = exec.CommandContext(ctx, "git", "reset", "--hard", fmt.Sprintf("origin/%s", targetBranch))
+	cmd = exec.CommandContext(ctx, "git", "pull", "--ff-only", "origin", branch)
 	cmd.Dir = repoPath
 	cmd.Env = m.buildEnvironment(repo)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git reset failed: %w\nOutput: %s", err, string(output))
+		return fmt.Errorf(
+			"update: fast-forward not possible for %q — local and remote have diverged; manual merge required: %w\nOutput: %s",
+			repo.Name, err, string(output),
+		)
 	}
 
 	return nil
@@ -101,10 +156,14 @@ func (m *Manager) Update(ctx context.Context, repo *types.Repository) error {
 // Status returns the current status of a repository
 func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.RepoStatus, error) {
 	if !m.Exists(repo) {
-		return nil, fmt.Errorf("repository does not exist at %s", m.getRepoPath(repo))
+		repoPath, _ := m.getRepoPath(repo)
+		return nil, fmt.Errorf("repository does not exist at %s", repoPath)
 	}
 
-	repoPath := m.getRepoPath(repo)
+	repoPath, err := m.getRepoPath(repo)
+	if err != nil {
+		return nil, fmt.Errorf("resolving repository path: %w", err)
+	}
 	status := &types.RepoStatus{
 		Path: repoPath,
 	}
@@ -137,10 +196,9 @@ func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.Re
 		lines := strings.Split(statusOutput, "\n")
 		for _, line := range lines {
 			if line != "" {
-				// Extract filename from git status output
-				parts := strings.SplitN(line, " ", 3)
-				if len(parts) >= 3 {
-					status.UncommittedFiles = append(status.UncommittedFiles, strings.TrimSpace(parts[2]))
+				// Extract filename from git status --porcelain output (XY FILENAME from column 3)
+				if len(line) >= 3 {
+					status.UncommittedFiles = append(status.UncommittedFiles, line[3:])
 				}
 			}
 		}
@@ -149,7 +207,7 @@ func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.Re
 	// Get ahead/behind info
 	targetBranch := repo.Branch
 	if targetBranch == "" {
-		targetBranch = "main"
+		targetBranch = types.DefaultBranch
 	}
 
 	cmd = exec.CommandContext(ctx, "git", "rev-list", "--count", "--left-right", fmt.Sprintf("HEAD...origin/%s", targetBranch))
@@ -162,8 +220,8 @@ func (m *Manager) Status(ctx context.Context, repo *types.Repository) (*types.Re
 		if len(parts) == 2 {
 			ahead := 0
 			behind := 0
-			fmt.Sscanf(parts[0], "%d", &ahead)
-			fmt.Sscanf(parts[1], "%d", &behind)
+			_, _ = fmt.Sscanf(parts[0], "%d", &ahead)
+			_, _ = fmt.Sscanf(parts[1], "%d", &behind)
 
 			status.AheadBehind = &types.BranchComparison{
 				Ahead:  ahead,
@@ -184,7 +242,12 @@ func (m *Manager) Execute(ctx context.Context, repo *types.Repository, command s
 		StartTime:  startTime,
 	}
 
-	repoPath := m.getRepoPath(repo)
+	repoPath, err := m.getRepoPath(repo)
+	if err != nil {
+		result.Error = fmt.Errorf("resolving repository path: %w", err)
+		result.Duration = time.Since(startTime)
+		return result, result.Error
+	}
 
 	if !m.Exists(repo) {
 		result.Error = fmt.Errorf("repository does not exist at %s", repoPath)
@@ -212,43 +275,64 @@ func (m *Manager) Execute(ctx context.Context, repo *types.Repository, command s
 
 // Exists checks if a repository exists at the configured path
 func (m *Manager) Exists(repo *types.Repository) bool {
-	repoPath := m.getRepoPath(repo)
+	repoPath, err := m.getRepoPath(repo)
+	if err != nil {
+		return false
+	}
 	gitDir := filepath.Join(repoPath, ".git")
 
-	// Check if it's a git repository
-	if stat, err := os.Stat(gitDir); err == nil {
-		return stat.IsDir()
-	}
-
-	// Check if it's a git worktree
-	if _, err := os.Stat(gitDir); err == nil {
-		return true
-	}
-
-	return false
+	_, statErr := os.Stat(gitDir)
+	return statErr == nil
 }
 
-// getRepoPath returns the absolute path for a repository
-func (m *Manager) getRepoPath(repo *types.Repository) string {
+// getRepoPath returns the resolved path for a repository, verifying that it
+// does not escape m.basePath (path traversal protection, SEC-C2).
+func (m *Manager) getRepoPath(repo *types.Repository) (string, error) {
+	var resolved string
 	if filepath.IsAbs(repo.Path) {
-		return repo.Path
+		resolved = filepath.Clean(repo.Path)
+	} else if m.basePath != "" {
+		resolved = filepath.Join(m.basePath, repo.Path)
+	} else {
+		resolved = repo.Path
 	}
 
+	// Containment check: when a basePath is set, the resolved path must stay
+	// inside it (prevents both relative ../../ traversal and absolute escapes).
+	// Uses filepath.Rel which correctly handles cross-volume paths on Windows
+	// and avoids case-sensitivity issues with raw string prefix matching.
 	if m.basePath != "" {
-		return filepath.Join(m.basePath, repo.Path)
+		absBase, err := filepath.Abs(m.basePath)
+		if err != nil {
+			return "", fmt.Errorf("resolving basePath: %w", err)
+		}
+		absResolved, err := filepath.Abs(resolved)
+		if err != nil {
+			return "", fmt.Errorf("resolving repo path: %w", err)
+		}
+		rel, err := filepath.Rel(absBase, absResolved)
+		if err != nil {
+			// filepath.Rel fails on Windows when paths are on different volumes
+			return "", fmt.Errorf("repository path %q escapes basePath %q", repo.Path, m.basePath)
+		}
+		if strings.HasPrefix(rel, "..") {
+			return "", fmt.Errorf("repository path %q escapes basePath %q", repo.Path, m.basePath)
+		}
 	}
 
-	return repo.Path
+	return resolved, nil
 }
 
-// buildEnvironment builds the environment variables for git commands
+// buildEnvironment builds the environment variables for git commands,
+// filtering out keys that could be used to hijack subprocess execution (SEC-C1).
 func (m *Manager) buildEnvironment(repo *types.Repository) []string {
 	env := os.Environ()
-
-	// Add repository-specific environment variables
 	for key, value := range repo.Environment {
+		if _, blocked := config.BlockedEnvKeys[strings.ToUpper(key)]; blocked {
+			// Skip dangerous keys silently (validation should have caught them at load time)
+			continue
+		}
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
-
 	return env
 }

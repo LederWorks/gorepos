@@ -3,6 +3,7 @@ package display
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -65,6 +66,7 @@ func (d *ConfigTreeDisplay) printNodeWithValidationAndFileGroups(node FileNode, 
 		for groupName := range node.FileGroups {
 			groupNames = append(groupNames, groupName)
 		}
+		sort.Strings(groupNames)
 
 		for i, groupName := range groupNames {
 			repos := node.FileGroups[groupName]

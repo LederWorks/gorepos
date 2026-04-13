@@ -165,6 +165,53 @@ func TestValidateConfig_AbsolutePathWithoutBasePath(t *testing.T) {
 	}
 }
 
+// --- ValidateConfig: platforms ---
+
+func TestValidateConfig_PlatformsValid(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Global.Platforms = []types.PlatformEntry{
+		{Hostname: "gitlab.mycompany.com", Type: "gitlab"},
+		{Hostname: "github.internal.corp", Type: "github"},
+	}
+	if err := l.ValidateConfig(c); err != nil {
+		t.Errorf("expected valid config with custom platforms, got: %v", err)
+	}
+}
+
+func TestValidateConfig_PlatformEmptyHostname(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Global.Platforms = []types.PlatformEntry{
+		{Hostname: "", Type: "gitlab"},
+	}
+	if err := l.ValidateConfig(c); err == nil {
+		t.Error("expected error for platform with empty hostname")
+	}
+}
+
+func TestValidateConfig_PlatformInvalidType(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Global.Platforms = []types.PlatformEntry{
+		{Hostname: "git.example.com", Type: "forgejo"},
+	}
+	if err := l.ValidateConfig(c); err == nil {
+		t.Error("expected error for platform with unknown type 'forgejo'")
+	}
+}
+
+func TestValidateConfig_PlatformAllValidTypes(t *testing.T) {
+	l := newLoader()
+	for _, typ := range []string{"github", "gitlab", "azure", "bitbucket"} {
+		c := validConfig()
+		c.Global.Platforms = []types.PlatformEntry{{Hostname: "git.example.com", Type: typ}}
+		if err := l.ValidateConfig(c); err != nil {
+			t.Errorf("type %q should be valid, got: %v", typ, err)
+		}
+	}
+}
+
 // --- setDefaults ---
 
 func TestSetDefaults_FillsMissingFields(t *testing.T) {
@@ -514,8 +561,8 @@ repositories:
     url: https://github.com/example/r2.git
 `
 
-	os.WriteFile(aPath, []byte(aContent), 0644)
-	os.WriteFile(bPath, []byte(bContent), 0644)
+	_ = os.WriteFile(aPath, []byte(aContent), 0644)
+	_ = os.WriteFile(bPath, []byte(bContent), 0644)
 
 	l := newLoader()
 	_, err := l.LoadConfigWithDetails(aPath)
@@ -539,10 +586,10 @@ func TestLoadRemoteConfig_EmptyURL(t *testing.T) {
 func TestGetConfigPath_NotFound(t *testing.T) {
 	// Change to a temp directory where no config files exist
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	dir := t.TempDir()
-	os.Chdir(dir)
+	_ = os.Chdir(dir)
 
 	_, err := GetConfigPath()
 	if err == nil {
@@ -552,13 +599,13 @@ func TestGetConfigPath_NotFound(t *testing.T) {
 
 func TestGetConfigPath_FoundInCurrentDir(t *testing.T) {
 	orig, _ := os.Getwd()
-	defer os.Chdir(orig)
+	defer func() { _ = os.Chdir(orig) }()
 
 	dir := t.TempDir()
-	os.Chdir(dir)
+	_ = os.Chdir(dir)
 
 	// Create a config file
-	os.WriteFile(filepath.Join(dir, "gorepos.yaml"), []byte(""), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "gorepos.yaml"), []byte(""), 0644)
 
 	path, err := GetConfigPath()
 	if err != nil {
@@ -566,5 +613,484 @@ func TestGetConfigPath_FoundInCurrentDir(t *testing.T) {
 	}
 	if filepath.Base(path) != "gorepos.yaml" {
 		t.Errorf("expected gorepos.yaml, got %q", path)
+	}
+}
+
+// --- Include-level identity ---
+
+func TestValidateConfig_IncludeUserEmailRequiresRepo(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Path: "./local.yaml", User: "Jane", Email: "jane@co.com"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for user/email on local include")
+	}
+}
+
+func TestValidateConfig_IncludeUserEmailOnRepoOK(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com/org/repo", User: "Jane", Email: "jane@co.com"},
+	}
+	err := l.ValidateConfig(c)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateConfig_IncludeRepo_HTTPRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "http://github.com/org/repo"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for http:// include repo URL")
+	}
+}
+
+func TestValidateConfig_IncludeRepo_SCPAllowed(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "git@github.com:org/repo"},
+	}
+	err := l.ValidateConfig(c)
+	if err != nil {
+		t.Errorf("unexpected error for git@ include repo URL: %v", err)
+	}
+}
+
+func TestValidateConfig_IncludeRepo_SSHAllowed(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "ssh://github.com/org/repo"},
+	}
+	err := l.ValidateConfig(c)
+	if err != nil {
+		t.Errorf("unexpected error for ssh:// include repo URL: %v", err)
+	}
+}
+
+func TestValidateConfig_IncludeRepo_EmptyHostRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for https:// URL with no host")
+	}
+}
+
+func TestValidateConfig_IncludeRepo_NoPathRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for URL with no path")
+	}
+}
+
+func TestValidateConfig_IncludeRepo_NoPathSlashRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com/"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for URL with bare slash path")
+	}
+}
+
+func TestValidateConfig_RepoURL_EmptyHostRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Repositories[0].URL = "https://"
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for repo URL with no host")
+	}
+}
+
+func TestValidateConfig_SCP_MalformedRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "git@"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for malformed SCP URL git@")
+	}
+}
+
+func TestCollectIdentityWarnings_NoWarningWithGlobalCreds(t *testing.T) {
+	c := validConfig()
+	c.Global.Credentials = &types.CredentialConfig{
+		GitUserName:  "Jane",
+		GitUserEmail: "jane@co.com",
+	}
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com/org/repo"},
+	}
+	warnings := CollectIdentityWarnings(c)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings with global credentials, got %v", warnings)
+	}
+}
+
+func TestCollectIdentityWarnings_NoWarningWithIncludeIdentity(t *testing.T) {
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com/org/repo", User: "Jane", Email: "jane@co.com"},
+	}
+	warnings := CollectIdentityWarnings(c)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings with include identity, got %v", warnings)
+	}
+}
+
+func TestCollectIdentityWarnings_WarnsWhenNoIdentity(t *testing.T) {
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "https://github.com/org/repo"},
+	}
+	warnings := CollectIdentityWarnings(c)
+	if len(warnings) != 1 {
+		t.Errorf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+}
+
+func TestCollectIdentityWarnings_NoWarningForLocalInclude(t *testing.T) {
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Path: "./local.yaml"},
+	}
+	warnings := CollectIdentityWarnings(c)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for local include, got %v", warnings)
+	}
+}
+
+// --- ApplyIncludeIdentity ---
+
+func TestApplyIncludeIdentity_StampsReposWithoutOwnIdentity(t *testing.T) {
+	c := &types.Config{
+		Repositories: []types.Repository{
+			{Name: "r1", Path: "r1", URL: "https://x.git"},
+			{Name: "r2", Path: "r2", URL: "https://y.git", User: "Existing", Email: "existing@co.com"},
+		},
+	}
+	c.ApplyIncludeIdentity("Jane", "jane@co.com")
+
+	if c.Repositories[0].User != "Jane" || c.Repositories[0].Email != "jane@co.com" {
+		t.Errorf("expected include identity on r1, got user=%q email=%q", c.Repositories[0].User, c.Repositories[0].Email)
+	}
+	if c.Repositories[1].User != "Existing" || c.Repositories[1].Email != "existing@co.com" {
+		t.Errorf("repo-level identity should take precedence, got user=%q email=%q", c.Repositories[1].User, c.Repositories[1].Email)
+	}
+}
+
+func TestApplyIncludeIdentity_NoOpWhenEmpty(t *testing.T) {
+	c := &types.Config{
+		Repositories: []types.Repository{
+			{Name: "r1", Path: "r1", URL: "https://x.git"},
+		},
+	}
+	c.ApplyIncludeIdentity("", "")
+
+	if c.Repositories[0].User != "" || c.Repositories[0].Email != "" {
+		t.Error("should not stamp empty identity")
+	}
+}
+
+// --- buildIncludesSequenceNode ---
+
+func TestBuildIncludesSequenceNode_WithUserEmail(t *testing.T) {
+	includes := []types.IncludeEntry{
+		{Repo: "https://github.com/org/repo", User: "Jane", Email: "jane@co.com"},
+		{Path: "./local.yaml"},
+	}
+	node := buildIncludesSequenceNode(includes)
+
+	// First entry should be a mapping with user and email
+	if len(node.Content) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(node.Content))
+	}
+
+	mapNode := node.Content[0]
+	// Count the key-value pairs: repo, user, email = 3 pairs = 6 nodes
+	if len(mapNode.Content) != 6 {
+		t.Errorf("expected 6 content nodes (repo+user+email), got %d", len(mapNode.Content))
+	}
+
+	// Check user and email keys are present
+	foundUser, foundEmail := false, false
+	for i := 0; i < len(mapNode.Content)-1; i += 2 {
+		switch mapNode.Content[i].Value {
+		case "user":
+			foundUser = true
+			if mapNode.Content[i+1].Value != "Jane" {
+				t.Errorf("expected user=Jane, got %q", mapNode.Content[i+1].Value)
+			}
+		case "email":
+			foundEmail = true
+			if mapNode.Content[i+1].Value != "jane@co.com" {
+				t.Errorf("expected email=jane@co.com, got %q", mapNode.Content[i+1].Value)
+			}
+		}
+	}
+	if !foundUser || !foundEmail {
+		t.Errorf("expected user and email keys, foundUser=%v foundEmail=%v", foundUser, foundEmail)
+	}
+}
+
+// --- IncludeEntry.String() with identity ---
+
+func TestIncludeEntryString_WithUserAndEmail(t *testing.T) {
+	e := types.IncludeEntry{
+		Repo:  "https://github.com/org/repo",
+		Ref:   "main",
+		User:  "Jane",
+		Email: "jane@co.com",
+	}
+	s := e.String()
+	if s != "https://github.com/org/repo (ref: main) (identity: Jane <jane@co.com>)" {
+		t.Errorf("unexpected String(): %q", s)
+	}
+}
+
+func TestIncludeEntryString_WithUserOnly(t *testing.T) {
+	e := types.IncludeEntry{
+		Repo: "https://github.com/org/repo",
+		User: "Jane",
+	}
+	s := e.String()
+	if s != "https://github.com/org/repo (identity: Jane)" {
+		t.Errorf("unexpected String(): %q", s)
+	}
+}
+
+func TestIncludeEntryString_WithEmailOnly(t *testing.T) {
+	e := types.IncludeEntry{
+		Repo:  "https://github.com/org/repo",
+		Email: "jane@co.com",
+	}
+	s := e.String()
+	if s != "https://github.com/org/repo (identity: <jane@co.com>)" {
+		t.Errorf("unexpected String(): %q", s)
+	}
+}
+
+// --- looksLikeCommitHash ---
+
+func TestLooksLikeCommitHash(t *testing.T) {
+	tests := []struct {
+		ref    string
+		expect bool
+	}{
+		// Short hashes must return false — platforms cannot fetch commits by abbreviated SHA.
+		{"abc123f", false},
+		{"ABCDEF1", false},
+		{"abc12", false}, // too short
+		// Exactly 40 hex chars is the only accepted format.
+		{"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", true},
+		{"A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2", true}, // uppercase hex
+		// Non-hex and ref-like strings must return false.
+		{"main", false},
+		{"v1.0.0", false},
+		{"refs/tags/v1.0.0", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := looksLikeCommitHash(tt.ref)
+		if got != tt.expect {
+			t.Errorf("looksLikeCommitHash(%q) = %v, want %v", tt.ref, got, tt.expect)
+		}
+	}
+}
+
+// --- validateUserName tests ---
+
+func TestValidateUserName_AcceptsNormalName(t *testing.T) {
+	if err := validateUserName("Jane Doe"); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateUserName_AcceptsUnicode(t *testing.T) {
+	if err := validateUserName("Bence Bánó"); err != nil {
+		t.Errorf("expected no error for unicode name, got: %v", err)
+	}
+}
+
+func TestValidateUserName_RejectsGitCommand(t *testing.T) {
+	err := validateUserName(`git config user.name "Bence Bánó"`)
+	if err == nil {
+		t.Error("expected error for pasted git command")
+	}
+}
+
+func TestValidateUserName_RejectsGitCommandCaseInsensitive(t *testing.T) {
+	err := validateUserName(`Git config user.name "X"`)
+	if err == nil {
+		t.Error("expected error for pasted git command (uppercase)")
+	}
+}
+
+func TestValidateUserName_RejectsShellChars(t *testing.T) {
+	for _, ch := range []string{`"`, "'", "$", ";", "|", "`", "\\"} {
+		err := validateUserName("test" + ch + "name")
+		if err == nil {
+			t.Errorf("expected error for char %q", ch)
+		}
+	}
+}
+
+func TestValidateUserName_RejectsTooLong(t *testing.T) {
+	long := ""
+	for i := 0; i < 101; i++ {
+		long += "a"
+	}
+	if err := validateUserName(long); err == nil {
+		t.Error("expected error for 101-char name")
+	}
+}
+
+// --- validateEmail tests ---
+
+func TestValidateEmail_AcceptsValid(t *testing.T) {
+	valid := []string{
+		"jane@example.com",
+		"user.name+tag@domain.org",
+		"test@sub.domain.co.uk",
+	}
+	for _, e := range valid {
+		if err := validateEmail(e); err != nil {
+			t.Errorf("expected %q to be valid, got: %v", e, err)
+		}
+	}
+}
+
+func TestValidateEmail_RejectsMissingAt(t *testing.T) {
+	if err := validateEmail("notanemail"); err == nil {
+		t.Error("expected error for missing @")
+	}
+}
+
+func TestValidateEmail_RejectsGitCommand(t *testing.T) {
+	err := validateEmail(`git config user.email "x@y.com"`)
+	if err == nil {
+		t.Error("expected error for pasted git command")
+	}
+}
+
+func TestValidateEmail_RejectsInvalid(t *testing.T) {
+	if err := validateEmail("@nolocal.com"); err == nil {
+		t.Error("expected error for missing local part")
+	}
+}
+
+// --- local directory include tests ---
+
+func TestLocalDirectoryInclude_AppendsGoreposYaml(t *testing.T) {
+	// Create a temp dir with a subdirectory containing a gorepos.yaml
+	tmpDir := t.TempDir()
+	subDir := filepath.Join(tmpDir, "myconfig")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a minimal valid config in the subdirectory
+	subConfig := `version: "1.0"
+global:
+  workers: 2
+  timeout: 10s
+repositories:
+  - name: sub-repo
+    path: sub-repo
+    url: https://github.com/org/sub-repo
+`
+	if err := os.WriteFile(filepath.Join(subDir, "gorepos.yaml"), []byte(subConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write a root config that includes the directory path (not the file)
+	rootConfig := `version: "1.0"
+global:
+  basePath: "` + tmpDir + `"
+  workers: 5
+  timeout: 30s
+includes:
+  - ` + subDir + `
+repositories:
+  - name: root-repo
+    path: root-repo
+    url: https://github.com/org/root-repo
+`
+	rootFile := filepath.Join(tmpDir, "gorepos.yaml")
+	if err := os.WriteFile(rootFile, []byte(rootConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := newLoader()
+	result, err := loader.LoadConfigWithDetails(rootFile)
+	if err != nil {
+		t.Fatalf("expected directory include to work, got: %v", err)
+	}
+	// Should have both repos merged
+	found := false
+	for _, r := range result.Config.Repositories {
+		if r.Name == "sub-repo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected sub-repo from directory include to be merged into config")
+	}
+}
+
+// TestLoadConfigWithDetails_NoWorkersOrTimeout verifies that a config omitting the
+// optional workers and timeout fields succeeds via LoadConfigWithDetails.
+// Regression test for C-1: setDefaults must run BEFORE ValidateConfig so that the
+// validator sees populated values rather than zero values.
+func TestLoadConfigWithDetails_NoWorkersOrTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// Intentionally omit global.workers and global.timeout — they are optional.
+	content := `version: "1.0"
+global:
+  basePath: /tmp/repos
+repositories:
+  - name: myrepo
+    path: myrepo
+    url: https://github.com/example/myrepo.git
+`
+	p := writeYAML(t, dir, "gorepos.yaml", content)
+
+	l := newLoader()
+	result, err := l.LoadConfigWithDetails(p)
+	if err != nil {
+		t.Fatalf("expected success when workers/timeout are omitted, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	// setDefaults should have filled in Workers >= 1 and Timeout >= 1s.
+	if result.Config.Global.Workers < 1 {
+		t.Errorf("expected Workers >= 1 after defaults, got %d", result.Config.Global.Workers)
+	}
+	if result.Config.Global.Timeout < 1 {
+		t.Errorf("expected Timeout >= 1ns after defaults, got %v", result.Config.Global.Timeout)
 	}
 }

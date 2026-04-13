@@ -2,21 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/LederWorks/gorepos/internal/commands"
 	"github.com/LederWorks/gorepos/internal/config"
 	"github.com/LederWorks/gorepos/internal/executor"
 	"github.com/LederWorks/gorepos/internal/repository"
-	"github.com/LederWorks/gorepos/pkg/graph"
 	"github.com/LederWorks/gorepos/pkg/types"
 	"github.com/spf13/cobra"
 )
-
-// version is embedded at build time via -ldflags "-X main.version=..."
-var version string
 
 var (
 	cfgFile string
@@ -24,21 +23,37 @@ var (
 	verbose bool
 	dryRun  bool
 
+	// version is set at build time via -ldflags "-X main.version=..."
+	version = "dev"
+
+	// init command flags
+	initPath     string
+	initBasePath string
+	initIncludes []string
+	initForce    bool
+
 	// setup command flags
-	setupPath     string
-	setupBasePath string
-	setupIncludes []string
-	setupForce    bool
+	setupConfigPath string
+	setupIncludes   []string
+	setupUser       string
+	setupEmail      string
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "gorepos",
-	Short: "A modern, high-performance repository management tool",
+	Use:     "gorepos",
+	Version: version,
+	Short:   "A modern, high-performance repository management tool",
 	Long: `GoRepos is a modern repository management tool that provides:
 - Parallel repository operations for superior performance
 - YAML-based configuration with external config feeding
 - Template system for content management
 - Plugin architecture for extensibility`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := exec.LookPath("git"); err != nil {
+			return fmt.Errorf("git is not installed or not in PATH — gorepos requires git")
+		}
+		return nil
+	},
 }
 
 var statusCmd = &cobra.Command{
@@ -90,19 +105,32 @@ var graphCmd = &cobra.Command{
 	RunE:  runGraph,
 }
 
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Initialize user configuration",
+	Long:  "Create a new user configuration file with platform-appropriate defaults via an interactive wizard",
+	RunE:  runInit,
+}
+
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Initialize user configuration",
-	Long:  "Create a user-specific configuration file with platform-appropriate defaults",
+	Short: "Add configuration sources",
+	Long:  "Add include files or URLs to your existing gorepos configuration via an interactive wizard",
 	RunE:  runSetup,
 }
 
 func init() {
+	// Init command flags
+	initCmd.Flags().StringVar(&initPath, "path", "", "Custom path for configuration file")
+	initCmd.Flags().StringVarP(&initBasePath, "base-path", "b", "", "Custom base path for repositories")
+	initCmd.Flags().StringSliceVar(&initIncludes, "includes", nil, "Include files or URLs to embed in initial configuration")
+	initCmd.Flags().BoolVarP(&initForce, "force", "f", false, "Overwrite existing configuration file")
+
 	// Setup command flags
-	setupCmd.Flags().StringVar(&setupPath, "path", "", "Custom path for configuration file")
-	setupCmd.Flags().StringVarP(&setupBasePath, "base-path", "b", "", "Custom base path for repositories")
-	setupCmd.Flags().StringSliceVar(&setupIncludes, "includes", nil, "Include files or URLs to add to configuration")
-	setupCmd.Flags().BoolVarP(&setupForce, "force", "f", false, "Overwrite existing configuration file")
+	setupCmd.Flags().StringVar(&setupConfigPath, "path", "", "Path to configuration file to update")
+	setupCmd.Flags().StringSliceVar(&setupIncludes, "includes", nil, "Include files or URLs to add (non-interactive)")
+	setupCmd.Flags().StringVar(&setupUser, "user", "", "Git user.name for remote repo includes (non-interactive)")
+	setupCmd.Flags().StringVar(&setupEmail, "email", "", "Git user.email for remote repo includes (non-interactive)")
 
 	// Add global flags
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "Configuration file path")
@@ -118,6 +146,7 @@ func init() {
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(groupsCmd)
 	rootCmd.AddCommand(graphCmd)
+	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(setupCmd)
 }
 
@@ -128,91 +157,36 @@ func main() {
 	}
 }
 
-// loadConfig loads the configuration file
+// loadConfig loads the configuration file using the graph-based path.
+// Commands that need the FileHierarchy for display (validate, graph, groups)
+// use commands.LoadConfigWithVerbose directly.
 func loadConfig() (*types.Config, error) {
-	result, err := loadConfigWithVerbose()
-	if err != nil {
-		return nil, err
-	}
-	return result.Config, nil
-}
-
-// loadConfigWithVerbose loads configuration and optionally shows hierarchy
-func loadConfigWithVerbose() (*config.ConfigLoadResult, error) {
-	loader := config.NewLoader()
-
-	if cfgFile != "" {
-		result, err := loader.LoadConfigWithDetails(cfgFile)
+	configPath := cfgFile
+	if configPath == "" {
+		var err error
+		configPath, err = config.GetConfigPath()
 		if err != nil {
 			return nil, err
 		}
-		return result, nil
-	}
-
-	// Try to find config file automatically
-	configPath, err := config.GetConfigPath()
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := loader.LoadConfigWithDetails(configPath)
-	if err != nil {
-		return nil, err
 	}
 
 	if verbose {
-		fmt.Printf("Using configuration file: %s\n", configPath)
+		fmt.Printf("Loading configuration from: %s\n", configPath)
+		fmt.Println()
 	}
 
-	return result, nil
-}
-
-// filterRepositoriesByContext uses graph-based context awareness to filter repositories
-// If CWD is within a managed repository path, only return repos under that path
-// If CWD is at base path or outside managed paths, return all repos
-func filterRepositoriesByContext(repos []types.Repository, basePath string) []types.Repository {
-	cwd, err := os.Getwd()
-	if err != nil {
-		if verbose {
-			fmt.Printf("Warning: Could not get current directory: %v\n", err)
-		}
-		return repos // Return all repos if we can't determine context
-	}
-
-	// Build a graph from repositories for context analysis
-	graphImpl := graph.NewRepositoryGraphImpl()
-	var repoNodes []*graph.GraphNode
-
-	// Create repository nodes
-	for i, repo := range repos {
-		repoNode := graph.NewGraphNode(
-			fmt.Sprintf("repo:%s", repo.Name),
-			graph.NodeTypeRepository,
-			repo.Name,
-		)
-		repoNode.Repository = &repos[i]
-		repoNodes = append(repoNodes, repoNode)
-		graphImpl.AddNode(repoNode)
-	}
-
-	// Use graph-based filtering
-	filteredNodes := graphImpl.FilterRepositoriesByGraphContext(basePath, cwd, repoNodes)
-
-	// Convert back to repository array
-	var result []types.Repository
-	for _, node := range filteredNodes {
-		if node.Repository != nil {
-			result = append(result, *node.Repository)
-		}
-	}
-
-	return result
+	loader := config.NewLoader()
+	return loader.LoadConfig(configPath)
 }
 
 // runStatus executes the status command
 func runStatus(cmd *cobra.Command, args []string) error {
-	statusCmd := commands.NewStatusCommand()
-	return statusCmd.Execute(cfgFile, verbose, workers, dryRun)
+	statusCommand := commands.NewStatusCommand()
+	w := 0
+	if cmd.Flags().Changed("parallel") {
+		w = workers
+	}
+	return statusCommand.Execute(cfgFile, verbose, w, dryRun)
 }
 
 // runUpdate executes the update command
@@ -228,14 +202,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	repoManager := repository.NewManager(cfg.Global.BasePath)
-	exec := executor.NewPool(cfg.Global.Workers)
+	repoManager := repository.NewManagerWithCredentials(cfg.Global.BasePath, cfg.Global.Credentials)
+	exec := executor.NewPool(cfg.Global.Workers, repoManager)
 
 	fmt.Printf("GoRepos Update (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
 
 	// Filter repositories based on current working directory context
-	contextRepos := filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+	contextRepos := commands.FilterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
 
 	// Prepare operations for enabled repositories that exist in current context
 	var operations []types.Operation
@@ -259,7 +233,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		operations = append(operations, types.Operation{
 			Repository: repo,
 			Command:    "update",
-			Context:    ctx,
 		})
 	}
 
@@ -276,18 +249,21 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Execute update operations
-	for _, repo := range updatedRepos {
-		fmt.Printf("Updating %s...", repo.Name)
-		err := repoManager.Update(ctx, repo)
-		if err != nil {
-			fmt.Printf(" ERROR: %v\n", err)
+	// Execute update operations in parallel
+	results := exec.Execute(ctx, operations)
+	var errs []error
+	for result := range results {
+		if result.Success {
+			fmt.Printf("[%s] OK (%s)\n", result.Repository.Name, result.Duration.Round(time.Millisecond))
 		} else {
-			fmt.Printf(" OK\n")
+			fmt.Printf("[%s] ERROR: %v\n", result.Repository.Name, result.Error)
+			errs = append(errs, result.Error)
 		}
 	}
-
-	return exec.Shutdown(ctx)
+	if shutdownErr := exec.Shutdown(ctx); shutdownErr != nil {
+		errs = append(errs, shutdownErr)
+	}
+	return errors.Join(errs...)
 }
 
 // runClone executes the clone command
@@ -303,14 +279,14 @@ func runClone(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	repoManager := repository.NewManager(cfg.Global.BasePath)
-	exec := executor.NewPool(cfg.Global.Workers)
+	repoManager := repository.NewManagerWithCredentials(cfg.Global.BasePath, cfg.Global.Credentials)
+	exec := executor.NewPool(cfg.Global.Workers, repoManager)
 
 	fmt.Printf("GoRepos Clone (workers: %d)\n", cfg.Global.Workers)
 	fmt.Println(strings.Repeat("=", 40))
 
 	// Filter repositories based on current working directory context
-	contextRepos := filterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
+	contextRepos := commands.FilterRepositoriesByContext(cfg.Repositories, cfg.Global.BasePath)
 
 	// Prepare operations for enabled repositories that don't exist in current context
 	var operations []types.Operation
@@ -336,7 +312,6 @@ func runClone(cmd *cobra.Command, args []string) error {
 		operations = append(operations, types.Operation{
 			Repository: repo,
 			Command:    "clone",
-			Context:    ctx,
 		})
 	}
 
@@ -353,339 +328,65 @@ func runClone(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Execute clone operations
-	for _, repo := range clonedRepos {
-		fmt.Printf("Cloning %s...", repo.Name)
-		err := repoManager.Clone(ctx, repo)
-		if err != nil {
-			fmt.Printf(" ERROR: %v\n", err)
+	// Execute clone operations in parallel
+	results := exec.Execute(ctx, operations)
+	var errs []error
+	for result := range results {
+		if result.Success {
+			fmt.Printf("[%s] OK (%s)\n", result.Repository.Name, result.Duration.Round(time.Millisecond))
 		} else {
-			fmt.Printf(" OK\n")
+			fmt.Printf("[%s] ERROR: %v\n", result.Repository.Name, result.Error)
+			errs = append(errs, result.Error)
 		}
 	}
-
-	return exec.Shutdown(ctx)
+	if shutdownErr := exec.Shutdown(ctx); shutdownErr != nil {
+		errs = append(errs, shutdownErr)
+	}
+	return errors.Join(errs...)
 }
 
 // runValidate executes the validate command
 func runValidate(cmd *cobra.Command, args []string) error {
-	validateCmd := commands.NewValidateCommand()
-	return validateCmd.Execute(cfgFile, verbose)
+	validateCommand := commands.NewValidateCommand()
+	return validateCommand.Execute(cfgFile, verbose)
 }
 
 // runRepos executes the repos command
 func runRepos(cmd *cobra.Command, args []string) error {
-	reposCmd := commands.NewReposCommand()
-	return reposCmd.Execute(cfgFile, verbose)
+	reposCommand := commands.NewReposCommand()
+	return reposCommand.Execute(cfgFile, verbose)
 }
 
 // runGroups executes the groups command
 func runGroups(cmd *cobra.Command, args []string) error {
-	groupsCmd := commands.NewGroupsCommand()
-	return groupsCmd.Execute(cfgFile, verbose)
+	groupsCommand := commands.NewGroupsCommand()
+	return groupsCommand.Execute(cfgFile, verbose)
 }
 
 // runGraph executes the graph command
 func runGraph(cmd *cobra.Command, args []string) error {
-	graphCmd := commands.NewGraphCommand()
-	return graphCmd.Execute(cfgFile, verbose)
+	graphCommand := commands.NewGraphCommand()
+	return graphCommand.Execute(cfgFile, verbose)
 }
 
-// displayGraph shows comprehensive graph information in a user-friendly format
-func displayGraph(graphQuery graph.GraphQuery, contextRepos []types.Repository) {
-	fmt.Println("=== Configuration Graph Overview ===")
-
-	// Create context repository map for quick lookup
-	contextRepoMap := make(map[string]bool)
-	if contextRepos != nil {
-		for _, repo := range contextRepos {
-			contextRepoMap[repo.Name] = true
-		}
-	}
-
-	// Show node summary
-	fmt.Println("\n--- Node Summary ---")
-	for _, nodeType := range []graph.NodeType{
-		graph.NodeTypeConfig, graph.NodeTypeRepository, graph.NodeTypeGroup,
-		graph.NodeTypeTag, graph.NodeTypeLabel,
-	} {
-		nodes := graphQuery.GetNodesByType(nodeType)
-		// Only show repositories that are in context
-		if nodeType == graph.NodeTypeRepository && contextRepos != nil {
-			fmt.Printf("%-12s: %d\n", nodeType, len(contextRepos))
-		} else {
-			fmt.Printf("%-12s: %d\n", nodeType, len(nodes))
-		}
-	}
-
-	// Show entity classification
-	fmt.Println("\n--- Node Classification ---")
-	explicit := graphQuery.GetExplicitNodes()
-	derived := graphQuery.GetDerivedNodes()
-	configEntities := graphQuery.GetConfigEntities()
-	logicalEntities := graphQuery.GetLogicalEntities()
-
-	fmt.Printf("%-12s: %d (from configuration files)\n", "Explicit", len(explicit))
-	fmt.Printf("%-12s: %d (computed from config)\n", "Derived", len(derived))
-	fmt.Printf("%-12s: %d (configs + repositories)\n", "Config", len(configEntities))
-	fmt.Printf("%-12s: %d (groups + computed)\n", "Logical", len(logicalEntities))
-
-	// Show relationship summary
-	fmt.Println("\n--- Relationship Summary ---")
-	for _, relType := range []graph.RelationType{
-		graph.RelationParentChild, graph.RelationDefines, graph.RelationIncludes,
-		graph.RelationTaggedWith, graph.RelationLabeledWith,
-	} {
-		relationships := graphQuery.GetRelationshipsByType(relType)
-		fmt.Printf("%-12s: %d\n", relType, len(relationships))
-	}
-
-	// Show configuration hierarchy
-	fmt.Println("\n--- Configuration Hierarchy ---")
-	displayConfigHierarchy(graphQuery, contextRepoMap)
-
-	// Show groups with repositories (context-filtered)
-	fmt.Println("\n--- Repository Groups ---")
-	groups := graphQuery.GetGroupsForDisplay()
-	if len(groups) == 0 {
-		fmt.Println("No groups defined")
-	} else {
-		hasContextGroups := false
-		for groupName, repos := range groups {
-			// Filter repositories in this group to only those in context
-			var contextRepos []string
-			for _, repo := range repos {
-				if len(contextRepoMap) == 0 || contextRepoMap[repo] {
-					contextRepos = append(contextRepos, repo)
-				}
-			}
-			// Only show groups that have repositories in current context
-			if len(contextRepos) > 0 {
-				if !hasContextGroups {
-					hasContextGroups = true
-				}
-				fmt.Printf("\n%s (%d repositories):\n", groupName, len(contextRepos))
-				for _, repo := range contextRepos {
-					fmt.Printf("  • %s\n", repo)
-				}
-			}
-		}
-		if !hasContextGroups {
-			fmt.Println("No groups with repositories in current context")
-		}
-	}
-
-	// Show repository summary
-	fmt.Println("\n--- Repository Summary ---")
-	repositories := graphQuery.GetNodesByType(graph.NodeTypeRepository)
-	if len(repositories) == 0 {
-		fmt.Println("No repositories defined")
-	} else {
-		// Filter repositories to only show those in context
-		for _, repoNode := range repositories {
-			// Skip repositories not in current context
-			if contextRepos != nil && !contextRepoMap[repoNode.Name] {
-				continue
-			}
-
-			status := "●"
-			if repoNode.Repository != nil && repoNode.Repository.Disabled {
-				status = "○"
-			}
-
-			fmt.Printf("  %s %-30s (scope: %s)\n", status, repoNode.Name, repoNode.GetPathString())
-		}
-	}
-
-	// Show tags and labels (context-filtered)
-	fmt.Println("\n--- Tags and Labels ---")
-	displayTagsAndLabels(graphQuery, contextRepoMap)
-}
-
-// displayTagsAndLabels shows tags and labels used by repositories in context
-func displayTagsAndLabels(graphQuery graph.GraphQuery, contextRepoMap map[string]bool) {
-	// Display tags
-	tags := graphQuery.GetNodesByType(graph.NodeTypeTag)
-	if len(tags) > 0 {
-		// Filter tags to only those used by repositories in context
-		relevantTags := make([]*graph.GraphNode, 0)
-		for _, tagNode := range tags {
-			if tagNode.Tag != nil {
-				// Check if this tag is used by any repository in context
-				taggedWith := graphQuery.GetRelationshipsByType(graph.RelationTaggedWith)
-				isRelevant := false
-				for _, rel := range taggedWith {
-					if rel.To.ID == tagNode.ID {
-						// If no context filtering or the tagged entity is in context
-						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
-							isRelevant = true
-							break
-						}
-					}
-				}
-				if isRelevant {
-					relevantTags = append(relevantTags, tagNode)
-				}
-			}
-		}
-
-		if len(relevantTags) > 0 {
-			fmt.Printf("\nTags (%d):\n", len(relevantTags))
-			for _, tagNode := range relevantTags {
-				fmt.Printf("  🏷️  %s = %v (scope: %s)\n", tagNode.Tag.Name, tagNode.Tag.Value, tagNode.Tag.Scope)
-
-				// Show which context entities have this tag
-				taggedWith := graphQuery.GetRelationshipsByType(graph.RelationTaggedWith)
-				var contextTaggedEntities []string
-				for _, rel := range taggedWith {
-					if rel.To.ID == tagNode.ID {
-						// Only include entities that are in context
-						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
-							contextTaggedEntities = append(contextTaggedEntities, rel.From.Name)
-						}
-					}
-				}
-				if len(contextTaggedEntities) > 0 {
-					fmt.Printf("      Used by: %s\n", strings.Join(contextTaggedEntities, ", "))
-				}
-			}
-		} else {
-			fmt.Println("\nTags: None relevant to current context")
-		}
-	} else {
-		fmt.Println("\nTags: None defined")
-	}
-
-	// Display labels
-	labels := graphQuery.GetNodesByType(graph.NodeTypeLabel)
-	if len(labels) > 0 {
-		// Filter labels to only those used by repositories in context
-		relevantLabels := make([]*graph.GraphNode, 0)
-		for _, labelNode := range labels {
-			if labelNode.Label != nil {
-				// Check if this label is used by any repository in context
-				labeledWith := graphQuery.GetRelationshipsByType(graph.RelationLabeledWith)
-				isRelevant := false
-				for _, rel := range labeledWith {
-					if rel.To.ID == labelNode.ID {
-						// If no context filtering or the labeled entity is in context
-						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
-							isRelevant = true
-							break
-						}
-					}
-				}
-				if isRelevant {
-					relevantLabels = append(relevantLabels, labelNode)
-				}
-			}
-		}
-
-		if len(relevantLabels) > 0 {
-			fmt.Printf("\nLabels (%d):\n", len(relevantLabels))
-			for _, labelNode := range relevantLabels {
-				fmt.Printf("  🏷️  %s (scope: %s)\n", labelNode.Label.Name, labelNode.Label.Scope)
-
-				// Show which context entities have this label
-				labeledWith := graphQuery.GetRelationshipsByType(graph.RelationLabeledWith)
-				var contextLabeledEntities []string
-				for _, rel := range labeledWith {
-					if rel.To.ID == labelNode.ID {
-						// Only include entities that are in context
-						if len(contextRepoMap) == 0 || contextRepoMap[rel.From.Name] {
-							contextLabeledEntities = append(contextLabeledEntities, rel.From.Name)
-						}
-					}
-				}
-				if len(contextLabeledEntities) > 0 {
-					fmt.Printf("      Used by: %s\n", strings.Join(contextLabeledEntities, ", "))
-				}
-			}
-		} else {
-			fmt.Println("\nLabels: None relevant to current context")
-		}
-	} else {
-		fmt.Println("\nLabels: None defined")
-	}
-}
-
-// displayConfigHierarchy shows the configuration file hierarchy with context filtering
-func displayConfigHierarchy(graphQuery graph.GraphQuery, contextRepoMap map[string]bool) {
-	// Get root node
-	configNodes := graphQuery.GetNodesByType(graph.NodeTypeConfig)
-	if len(configNodes) == 0 {
-		fmt.Println("No configuration nodes found")
-		return
-	}
-
-	// Find root config nodes (level 1)
-	var rootConfigs []*graph.GraphNode
-	for _, node := range configNodes {
-		if node.Level == 1 {
-			rootConfigs = append(rootConfigs, node)
-		}
-	}
-
-	// Display hierarchy for each root config
-	for _, rootConfig := range rootConfigs {
-		fmt.Printf("└── %s\n", rootConfig.Name)
-		displayConfigNode(graphQuery, rootConfig, "    ", contextRepoMap)
-	}
-}
-
-// displayConfigNode recursively displays a config node and its children with context filtering
-func displayConfigNode(graphQuery graph.GraphQuery, node *graph.GraphNode, prefix string, contextRepoMap map[string]bool) {
-	// Get children config nodes
-	children := graphQuery.GetChildren(node, graph.NodeTypeConfig)
-
-	// Get repositories defined by this config
-	repositories := make([]*graph.GraphNode, 0)
-	relationships := graphQuery.GetRelationshipsByType(graph.RelationDefines)
-	for _, rel := range relationships {
-		if rel.From.ID == node.ID && rel.To.Type == graph.NodeTypeRepository {
-			// Only include repositories that are in context (if context filtering is enabled)
-			if len(contextRepoMap) == 0 || contextRepoMap[rel.To.Name] {
-				repositories = append(repositories, rel.To)
-			}
-		}
-	}
-
-	// Display repositories
-	for i, repo := range repositories {
-		isLast := i == len(repositories)-1 && len(children) == 0
-		connector := "├─"
-		if isLast {
-			connector = "└─"
-		}
-
-		status := "●"
-		if repo.Repository != nil && repo.Repository.Disabled {
-			status = "○"
-		}
-		fmt.Printf("%s%s%s %s\n", prefix, connector, status, repo.Name)
-	}
-
-	// Display child configs
-	for i, child := range children {
-		isLast := i == len(children)-1
-		connector := "├──"
-		childPrefix := prefix + "│   "
-		if isLast {
-			connector = "└──"
-			childPrefix = prefix + "    "
-		}
-
-		fmt.Printf("%s%s %s/\n", prefix, connector, child.Name)
-		displayConfigNode(graphQuery, child, childPrefix, contextRepoMap)
-	}
+// runInit implements the init command
+func runInit(cmd *cobra.Command, args []string) error {
+	return config.RunInit(config.SetupOptions{
+		Path:     initPath,
+		BasePath: initBasePath,
+		Includes: initIncludes,
+		Force:    initForce,
+		DryRun:   dryRun,
+	})
 }
 
 // runSetup implements the setup command
 func runSetup(cmd *cobra.Command, args []string) error {
 	return config.RunSetup(config.SetupOptions{
-		Path:     setupPath,
-		BasePath: setupBasePath,
+		Path:     setupConfigPath,
 		Includes: setupIncludes,
-		Force:    setupForce,
+		DryRun:   dryRun,
+		User:     setupUser,
+		Email:    setupEmail,
 	})
 }

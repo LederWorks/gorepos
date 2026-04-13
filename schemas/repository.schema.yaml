@@ -80,6 +80,16 @@ properties:
     default: false
     description: "Whether this repository is disabled for operations"
 
+  user:
+    type: string
+    description: "git user.name set locally in this repo's .git/config after clone (overrides global credentials.gitUserName)"
+    examples: ["Jane Dev", "John Smith"]
+
+  email:
+    type: string
+    description: "git user.email set locally in this repo's .git/config after clone (overrides global credentials.gitUserEmail)"
+    examples: ["jane@personal.com", "john@work.com"]
+
 additionalProperties: false
 
 examples:
