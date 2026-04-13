@@ -181,6 +181,12 @@ func TestIsRepoURL(t *testing.T) {
 		{"https://example.com/org/repo", false},
 		{"./local-config.yaml", false},
 		{"not-a-url", false},
+		// SCP-style git@ URLs — all known hosts must be recognised
+		{"git@github.com:org/repo", true},
+		{"git@github.com:org/repo.git", true},
+		{"git@gitlab.com:org/repo", true},
+		{"git@bitbucket.org:org/repo", true},
+		{"git@example.com:org/repo", false},
 	}
 
 	for _, tt := range tests {
@@ -266,5 +272,60 @@ func TestResolveRawContentURL_NoCustomPlatforms_UnsupportedHostStillFails(t *tes
 	_, err := ResolveRawContentURL("https://example.com/org/repo", "main", "gorepos.yaml", platforms)
 	if err == nil {
 		t.Error("expected error for unsupported platform even with empty custom list")
+	}
+}
+
+// --- SCP-style git@ URL support ---
+
+func TestResolveRawContentURL_SCP_GitHub(t *testing.T) {
+	got, err := ResolveRawContentURL("git@github.com:org/repo", "main", "gorepos.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://raw.githubusercontent.com/org/repo/main/gorepos.yaml"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestResolveRawContentURL_SCP_GitLab(t *testing.T) {
+	got, err := ResolveRawContentURL("git@gitlab.com:org/repo", "main", "gorepos.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://gitlab.com/org/repo/-/raw/main/gorepos.yaml"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestResolveRawContentURL_SCP_Bitbucket(t *testing.T) {
+	got, err := ResolveRawContentURL("git@bitbucket.org:org/repo", "main", "gorepos.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://bitbucket.org/org/repo/raw/main/gorepos.yaml"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestResolveRawContentURL_SCP_GitSuffix(t *testing.T) {
+	got, err := ResolveRawContentURL("git@github.com:org/repo.git", "main", "gorepos.yaml")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://raw.githubusercontent.com/org/repo/main/gorepos.yaml"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestIsRepoURL_SCP_CustomPlatform(t *testing.T) {
+	platforms := []types.PlatformEntry{
+		{Hostname: "git.mycompany.com", Type: "gitlab"},
+	}
+	if !IsRepoURL("git@git.mycompany.com:org/repo", platforms) {
+		t.Error("expected SCP URL with custom platform to be recognised as repo URL")
 	}
 }

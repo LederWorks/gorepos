@@ -133,9 +133,13 @@ func (m *Manager) Update(ctx context.Context, repo *types.Repository) error {
 	}
 
 	// Fast-forward only: never destroy local commits (H-2).
-	// If the local branch has diverged from origin the pull will fail, and we
-	// surface a clear error rather than silently clobbering the user's work.
-	cmd = exec.CommandContext(ctx, "git", "pull", "--ff-only")
+	// Pull explicitly from origin/<branch> so the configured branch is always
+	// used regardless of which branch is currently checked out locally.
+	branch := repo.Branch
+	if branch == "" {
+		branch = "main"
+	}
+	cmd = exec.CommandContext(ctx, "git", "pull", "--ff-only", "origin", branch)
 	cmd.Dir = repoPath
 	cmd.Env = m.buildEnvironment(repo)
 

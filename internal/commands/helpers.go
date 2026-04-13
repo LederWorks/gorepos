@@ -43,6 +43,11 @@ func LoadConfigWithVerbose(cfgFile string, verbose bool) (*config.ConfigLoadResu
 // directory. When CWD is at or outside basePath, all repositories are returned. When CWD is inside
 // a subtree, only repositories whose path starts with that relative sub-path are returned.
 func FilterRepositoriesByContext(repositories []types.Repository, basePath string) []types.Repository {
+	// No context filtering when basePath is unconfigured.
+	if basePath == "" {
+		return repositories
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return repositories
@@ -58,12 +63,13 @@ func FilterRepositoriesByContext(repositories []types.Repository, basePath strin
 		normCwd = filepath.ToSlash(real)
 	}
 
-	// At base path or outside — show everything
-	if normCwd == normBase || !strings.HasPrefix(normCwd, normBase) {
+	// At base path or outside (including false-positive like /base matching /base2) — show everything.
+	// Use a trailing "/" in the prefix check to match on segment boundaries.
+	if normCwd == normBase || !strings.HasPrefix(normCwd, normBase+"/") {
 		return repositories
 	}
 
-	relPath := strings.TrimPrefix(normCwd, normBase)
+	relPath := strings.TrimPrefix(normCwd, normBase+"/")
 	relPath = strings.Trim(relPath, "/")
 	if relPath == "" {
 		return repositories

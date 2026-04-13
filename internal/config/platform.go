@@ -9,12 +9,37 @@ import (
 	"github.com/LederWorks/gorepos/pkg/types"
 )
 
+// parseSCPOrURL parses either a standard URL or an SCP-style git URL (e.g. git@host:org/repo).
+// For SCP URLs it returns a synthetic *url.URL with Scheme="ssh", Host set to the hostname,
+// and Path set to "/"+the repo path, so all callers can use url.URL methods uniformly.
+// Standard URLs (those containing "://") are forwarded to url.Parse unchanged.
+func parseSCPOrURL(rawURL string) (*url.URL, error) {
+	// SCP syntax never contains "://" — distinguish from valid URLs like ssh://host/path.
+	if !strings.Contains(rawURL, "://") {
+		if colonIdx := strings.Index(rawURL, ":"); colonIdx > 0 {
+			hostPart := rawURL[:colonIdx]
+			// Strip optional user@ prefix (e.g. "git" in "git@github.com:org/repo").
+			if atIdx := strings.LastIndex(hostPart, "@"); atIdx >= 0 {
+				hostPart = hostPart[atIdx+1:]
+			}
+			repoPath := rawURL[colonIdx+1:]
+			return &url.URL{
+				Scheme: "ssh",
+				Host:   hostPart,
+				Path:   "/" + repoPath,
+			}, nil
+		}
+	}
+	return url.Parse(rawURL)
+}
+
 // ResolveRawContentURL converts a repository URL + ref + file path into a
 // platform-specific raw content URL that can be fetched via HTTP GET.
 // An optional list of custom platform entries (from global.platforms) is checked
 // before the built-in platform switch, enabling support for self-hosted instances.
+// Both standard HTTPS URLs and SCP-style git@ URLs are accepted.
 func ResolveRawContentURL(repoURL, ref, filePath string, customPlatforms ...[]types.PlatformEntry) (string, error) {
-	u, err := url.Parse(repoURL)
+	u, err := parseSCPOrURL(repoURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid repo URL: %w", err)
 	}
@@ -46,8 +71,9 @@ func ResolveRawContentURL(repoURL, ref, filePath string, customPlatforms ...[]ty
 
 // IsRepoURL returns true if the URL belongs to a known git hosting platform.
 // An optional list of custom platform entries is checked before the built-in list.
+// Both standard HTTPS URLs and SCP-style git@ URLs are accepted.
 func IsRepoURL(rawURL string, customPlatforms ...[]types.PlatformEntry) bool {
-	u, err := url.Parse(rawURL)
+	u, err := parseSCPOrURL(rawURL)
 	if err != nil {
 		return false
 	}

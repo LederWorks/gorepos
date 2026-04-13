@@ -642,6 +642,42 @@ func TestValidateConfig_IncludeUserEmailOnRepoOK(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_IncludeRepo_HTTPRejected(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "http://github.com/org/repo"},
+	}
+	err := l.ValidateConfig(c)
+	if err == nil {
+		t.Error("expected error for http:// include repo URL")
+	}
+}
+
+func TestValidateConfig_IncludeRepo_SCPAllowed(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "git@github.com:org/repo"},
+	}
+	err := l.ValidateConfig(c)
+	if err != nil {
+		t.Errorf("unexpected error for git@ include repo URL: %v", err)
+	}
+}
+
+func TestValidateConfig_IncludeRepo_SSHAllowed(t *testing.T) {
+	l := newLoader()
+	c := validConfig()
+	c.Includes = []types.IncludeEntry{
+		{Repo: "ssh://github.com/org/repo"},
+	}
+	err := l.ValidateConfig(c)
+	if err != nil {
+		t.Errorf("unexpected error for ssh:// include repo URL: %v", err)
+	}
+}
+
 func TestCollectIdentityWarnings_NoWarningWithGlobalCreds(t *testing.T) {
 	c := validConfig()
 	c.Global.Credentials = &types.CredentialConfig{

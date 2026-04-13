@@ -88,6 +88,39 @@ func TestFilterRepositoriesByContext_EmptyRepos_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestFilterRepositoriesByContext_EmptyBasePath_ReturnsAll(t *testing.T) {
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b", "org/b"),
+	}
+	// When basePath is empty (not configured), no context filtering should occur.
+	result := FilterRepositoriesByContext(repos, "")
+	if len(result) != 2 {
+		t.Errorf("expected all repos when basePath is empty, got %d", len(result))
+	}
+}
+
+func TestFilterRepositoriesByContext_NoBoundaryFalsePositive(t *testing.T) {
+	// relPath="org" must NOT match repo.Path="org2/a" (false-positive prefix match)
+	basePath := t.TempDir()
+	subDir := filepath.Join(basePath, "org")
+	_ = os.MkdirAll(subDir, 0755)
+
+	repos := []types.Repository{
+		makeTestRepo("a", "org/a"),
+		makeTestRepo("b2", "org2/b"),
+	}
+
+	orig, _ := os.Getwd()
+	defer func() { _ = os.Chdir(orig) }()
+	_ = os.Chdir(subDir)
+
+	result := FilterRepositoriesByContext(repos, basePath)
+	if len(result) != 1 || result[0].Name != "a" {
+		t.Errorf("expected only repo 'a', got %v", result)
+	}
+}
+
 // --- GetContextRepositoryNames ---
 
 func TestGetContextRepositoryNames_AtBasePath_ReturnsAll(t *testing.T) {

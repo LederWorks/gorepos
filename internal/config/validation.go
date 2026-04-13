@@ -139,6 +139,12 @@ func (l *Loader) ValidateConfig(config *types.Config) error {
 		if inc.Repo == "" && (inc.User != "" || inc.Email != "") {
 			return fmt.Errorf("include[%d]: 'user' and 'email' require 'repo' to be set (local includes inherit from global credentials)", i)
 		}
+		// Validate the repo URL scheme/format when present (SEC-C3)
+		if inc.Repo != "" {
+			if err := isAllowedRepoURL(inc.Repo); err != nil {
+				return fmt.Errorf("include[%d]: invalid repo URL: %w", i, err)
+			}
+		}
 		// Validate user/email values when present — reuse the same logic as setup.go
 		if inc.User != "" {
 			if err := validateUserName(inc.User); err != nil {
