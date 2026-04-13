@@ -90,7 +90,7 @@ func (r *ReposCommand) Execute(configFile string, verbose bool) error {
 }
 
 // printRepositoryTreeSimple displays the repository filesystem hierarchy with git status
-func (r *ReposCommand) printRepositoryTreeSimple(repos []types.Repository, basePath, currentDir string) {
+func (r *ReposCommand) printRepositoryTreeSimple(repos []types.Repository, basePath, _ string) {
 	// Build directory structure from repository paths
 	dirTree := r.buildDirectoryTree(repos, basePath)
 
@@ -153,7 +153,7 @@ func (r *ReposCommand) buildDirectoryTree(repos []types.Repository, basePath str
 }
 
 // printDirectoryTree recursively prints the directory tree
-func (r *ReposCommand) printDirectoryTree(node *DirectoryNode, prefix string, isLast bool) {
+func (r *ReposCommand) printDirectoryTree(node *DirectoryNode, prefix string, _ bool) {
 	// Sort subdirectories
 	var subdirNames []string
 	for name := range node.Subdirs {

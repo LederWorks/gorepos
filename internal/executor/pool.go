@@ -85,7 +85,7 @@ func (p *Pool) Execute(ctx context.Context, operations []types.Operation) <-chan
 }
 
 // worker processes operations from the job channel
-func (p *Pool) worker(ctx context.Context, id int, jobs <-chan types.Operation, results chan<- types.Result, wg *sync.WaitGroup) {
+func (p *Pool) worker(ctx context.Context, _ int, jobs <-chan types.Operation, results chan<- types.Result, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {

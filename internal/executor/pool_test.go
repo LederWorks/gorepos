@@ -9,6 +9,11 @@ import (
 	"github.com/LederWorks/gorepos/pkg/types"
 )
 
+const (
+	msgExpectedSuccess = "expected success, got error: %v"
+	msgExpectedFailure = "expected failure when manager returns error"
+)
+
 // --- Test helpers ---
 
 // mockRepositoryManager is a thread-safe mock implementing types.RepositoryManager.
@@ -284,7 +289,7 @@ func TestExecuteOperation_Clone_CallsManager(t *testing.T) {
 	result := p.executeOperation(ctx, &types.Operation{Repository: repo, Command: "clone"})
 
 	if !result.Success {
-		t.Errorf("expected success, got error: %v", result.Error)
+		t.Errorf(msgExpectedSuccess, result.Error)
 	}
 	if mock.CallCount() != 1 {
 		t.Errorf("expected manager.Clone called once, got %d calls", mock.CallCount())
@@ -300,7 +305,7 @@ func TestExecuteOperation_Clone_ManagerError_PropagatesError(t *testing.T) {
 	result := p.executeOperation(ctx, &types.Operation{Repository: makeRepo("r1"), Command: "clone"})
 
 	if result.Success {
-		t.Error("expected failure when manager returns error")
+		t.Error(msgExpectedFailure)
 	}
 	if result.Error == nil {
 		t.Error("expected non-nil error")
@@ -315,7 +320,7 @@ func TestExecuteOperation_Update_CallsManager(t *testing.T) {
 	result := p.executeOperation(ctx, &types.Operation{Repository: makeRepo("r1"), Command: "update"})
 
 	if !result.Success {
-		t.Errorf("expected success, got error: %v", result.Error)
+		t.Errorf(msgExpectedSuccess, result.Error)
 	}
 	if mock.CallCount() != 1 {
 		t.Errorf("expected manager.Update called once, got %d calls", mock.CallCount())
@@ -331,7 +336,7 @@ func TestExecuteOperation_Update_ManagerError_PropagatesError(t *testing.T) {
 	result := p.executeOperation(ctx, &types.Operation{Repository: makeRepo("r1"), Command: "update"})
 
 	if result.Success {
-		t.Error("expected failure when manager returns error")
+		t.Error(msgExpectedFailure)
 	}
 	if result.Error == nil {
 		t.Error("expected non-nil error")
@@ -351,7 +356,7 @@ func TestExecuteOperation_Status_PopulatesStatusData(t *testing.T) {
 	result := p.executeOperation(ctx, &types.Operation{Repository: makeRepo("r1"), Command: "status"})
 
 	if !result.Success {
-		t.Errorf("expected success, got error: %v", result.Error)
+		t.Errorf(msgExpectedSuccess, result.Error)
 	}
 	if result.StatusData == nil {
 		t.Fatal("expected StatusData to be populated")
@@ -370,7 +375,7 @@ func TestExecuteOperation_Status_ManagerError_PropagatesError(t *testing.T) {
 	result := p.executeOperation(ctx, &types.Operation{Repository: makeRepo("r1"), Command: "status"})
 
 	if result.Success {
-		t.Error("expected failure when manager returns error")
+		t.Error(msgExpectedFailure)
 	}
 	if result.StatusData != nil {
 		t.Error("expected StatusData to be nil on error")
